@@ -12,13 +12,13 @@ cortex-m-rt = "0.6.13"
 panic-halt = "0.2.0"
 embedded-hal = "0.2.4"
 
-[dependencies.stm32f4]
-version = "0.13.0"
-features = ["stm32f401", "rt"]
+#[dependencies.stm32f4]
+#version = "0.13.0"
+#features = ["stm32f401", "rt"]
 
 [dependencies.stm32f4xx-hal]
-version = "0.8"
-features = ["stm32f401", "rt"] # replace the model of your microcontroller here
+version = "0.9"
+features = ["stm32f401", "rt", "sdio"] # replace the model of your microcontroller here
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"
