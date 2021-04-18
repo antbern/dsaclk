@@ -12,6 +12,7 @@ pub struct Player {
     psc_freq: u32,
 }
 
+#[allow(dead_code)]
 impl Player {
     pub fn new(timer: stm32f401::TIM4, pin: PB7<Alternate<AF2>>, clocks: &Clocks) -> Player {
         // setup the clock source to be the internal clock

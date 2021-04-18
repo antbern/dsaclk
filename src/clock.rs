@@ -9,7 +9,7 @@ impl Clock {
         Clock { rtc: reg }
     }
 
-    pub fn init(&self) -> () {
+    pub fn init(&self) {
         // Initialize the RTC clock
     }
 

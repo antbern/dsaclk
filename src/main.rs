@@ -34,7 +34,9 @@ use util::GlobalCell;
 // global variables to be shared with ISRs
 static ENCODER: GlobalCell<Encoder> = GlobalCell::new(None);
 static TIMER_TIM5: GlobalCell<Timer<stm32::TIM5>> = GlobalCell::new(None);
-static EVENT_QUEUE: GlobalCell<EventQueue> = GlobalCell::new(Some(EventQueue::new()));
+// static EVENT_QUEUE: GlobalCell<EventQueue> = GlobalCell::new(Some(EventQueue::new()));
+
+static EVENT_QUEUE: EventQueue<32> = EventQueue::new();
 
 #[interrupt]
 fn TIM5() {
@@ -44,24 +46,8 @@ fn TIM5() {
             Some(())
         });
 
-        EVENT_QUEUE.try_borrow_mut::<_, ()>(cs, |q| {
-            q.put(InterruptEvent::Tick);
-            None
-        });
-
-        // if let Some(ref mut tim) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
-        //     tim.clear_interrupt(Event::TimeOut);
-        // }
-        /*
-        if let Some(ref mut buzzer) = BUZZER.borrow(cs).borrow_mut().deref_mut() {
-            for _ in 0..100 {
-                buzzer.set_high().unwrap();
-                cortex_m::asm::delay(84_000);
-                buzzer.set_low().unwrap();
-                cortex_m::asm::delay(84_000);
-            }
-        }
-        */
+        // put a tich event in the queue as a status indicator for now
+        EVENT_QUEUE.put(cs, InterruptEvent::Tick);
 
         // // poll the quadrature encoder to see if any change was made
         ENCODER.try_borrow_mut(cs, |enc| {
@@ -69,11 +55,7 @@ fn TIM5() {
                 // yes, post an event to the main loop
 
                 // EVT_QUEUE.borrow(cs).put(InterruptEvent::Encoder(change));
-
-                EVENT_QUEUE.try_borrow_mut::<_, ()>(cs, |q| {
-                    q.put(InterruptEvent::Encoder(change));
-                    None
-                });
+                EVENT_QUEUE.put(cs, InterruptEvent::Encoder(change));
             }
             Some(())
         });
@@ -129,17 +111,16 @@ fn main() -> ! {
     player.play(&mut delay);
 
     // setup Timer 3 as an encoder and put it in the mutex as a global variable
-    let encoder = Encoder::new(
+    ENCODER.put(Encoder::new(
         peripherals.TIM3,
         gpiob.pb4.into_alternate_af2().internal_pull_up(true),
         gpiob.pb5.into_alternate_af2().internal_pull_up(true),
-    );
-    ENCODER.put(encoder);
+    ));
 
     let mut timer = Timer::tim5(peripherals.TIM5, 1.hz(), clocks);
     timer.listen(Event::TimeOut);
     TIMER_TIM5.put(timer);
-
+    // enable TIM5 interrupt in the NVIC
     stm32::NVIC::unpend(stm32f4xx_hal::interrupt::TIM5);
     unsafe {
         stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
@@ -148,10 +129,10 @@ fn main() -> ! {
     loop {
         // wait for any interrupts to happen ("sleep")
         cortex_m::asm::wfi();
-        free(|cs| EVENT_QUEUE.try_borrow_mut(cs, |q| Some(iprintln!(stim, "Queue: {:?}", q))));
+        free(|cs| iprintln!(stim, "Queue size: {:?}", EVENT_QUEUE.count(cs)));
 
         // handle all pending events
-        while let Some(evt) = free(|cs| EVENT_QUEUE.try_borrow_mut(cs, |f| f.take())) {
+        while let Some(evt) = free(|cs| EVENT_QUEUE.take(cs)) {
             use InterruptEvent::*;
             match evt {
                 Tick => {
