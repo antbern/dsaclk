@@ -2,11 +2,14 @@
 #![no_main]
 
 mod clock;
+mod encoder;
+mod event;
 mod player;
-
-use core::{cell::RefCell, ops::DerefMut};
+mod util;
 
 use clock::Clock;
+use encoder::Encoder;
+use event::{EventQueue, InterruptEvent};
 // pick a panicking behavior
 use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
                      // use panic_abort as _; // requires nightly
@@ -16,32 +19,40 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 // use cortex_m::asm;
 use cortex_m::delay::Delay;
 use cortex_m::prelude::*;
-use cortex_m::{
-    interrupt::{free, Mutex},
-    iprint, iprintln,
-};
+use cortex_m::{interrupt::free, iprint, iprintln};
 use cortex_m_rt::entry;
 
 use player::Player;
 use stm32f4xx_hal::{
-    gpio::{gpiob::PB7, Output, PushPull},
     interrupt,
     prelude::*,
     stm32,
-    timer::{Event, PinC2, Timer},
+    timer::{Event, Timer},
 };
+use util::GlobalCell;
 
-static TIMER_TIM4: Mutex<RefCell<Option<Timer<stm32::TIM4>>>> = Mutex::new(RefCell::new(None));
-
-static BUZZER: Mutex<RefCell<Option<PB7<Output<PushPull>>>>> = Mutex::new(RefCell::new(None));
+// global variables to be shared with ISRs
+static ENCODER: GlobalCell<Encoder> = GlobalCell::new(None);
+static TIMER_TIM5: GlobalCell<Timer<stm32::TIM5>> = GlobalCell::new(None);
+static EVENT_QUEUE: GlobalCell<EventQueue> = GlobalCell::new(Some(EventQueue::new()));
 
 #[interrupt]
-fn TIM4() {
+fn TIM5() {
     free(|cs| {
-        if let Some(ref mut tim4) = TIMER_TIM4.borrow(cs).borrow_mut().deref_mut() {
-            tim4.clear_interrupt(Event::TimeOut);
-        }
+        TIMER_TIM5.try_borrow_mut::<_, ()>(cs, |tim| {
+            tim.clear_interrupt(Event::TimeOut);
+            Some(())
+        });
 
+        EVENT_QUEUE.try_borrow_mut::<_, ()>(cs, |q| {
+            q.put(InterruptEvent::Tick);
+            None
+        });
+
+        // if let Some(ref mut tim) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
+        //     tim.clear_interrupt(Event::TimeOut);
+        // }
+        /*
         if let Some(ref mut buzzer) = BUZZER.borrow(cs).borrow_mut().deref_mut() {
             for _ in 0..100 {
                 buzzer.set_high().unwrap();
@@ -50,6 +61,22 @@ fn TIM4() {
                 cortex_m::asm::delay(84_000);
             }
         }
+        */
+
+        // // poll the quadrature encoder to see if any change was made
+        ENCODER.try_borrow_mut(cs, |enc| {
+            if let Some(change) = enc.check() {
+                // yes, post an event to the main loop
+
+                // EVT_QUEUE.borrow(cs).put(InterruptEvent::Encoder(change));
+
+                EVENT_QUEUE.try_borrow_mut::<_, ()>(cs, |q| {
+                    q.put(InterruptEvent::Encoder(change));
+                    None
+                });
+            }
+            Some(())
+        });
     })
 }
 
@@ -61,8 +88,8 @@ fn main() -> ! {
     // enable the timer 4 peripheral in RCC before constraining the clock
     peripherals.RCC.apb1enr.modify(|_, w| w.tim4en().enabled());
 
-    cortex_m::asm::dsb();
-    // reset timer 4 peripheral
+    cortex_m::asm::dsb(); // needed to prevent some errors due to optimizations
+                          // reset timer 4 peripheral
     peripherals
         .RCC
         .apb1rstr
@@ -100,25 +127,44 @@ fn main() -> ! {
 
     let player = Player::new(peripherals.TIM4, gpiob.pb7.into_alternate_af2(), &clocks);
     player.play(&mut delay);
-    loop {
-        led.set_high().unwrap();
-        delay.delay_ms(100);
-        led.set_low().unwrap();
-        delay.delay_ms(100);
-    }
 
-    // free(|cs| *BUZZER.borrow(cs).borrow_mut() = Some(buzzer));
+    // setup Timer 3 as an encoder and put it in the mutex as a global variable
+    let encoder = Encoder::new(
+        peripherals.TIM3,
+        gpiob.pb4.into_alternate_af2().internal_pull_up(true),
+        gpiob.pb5.into_alternate_af2().internal_pull_up(true),
+    );
+    ENCODER.put(encoder);
 
-    let mut timer = Timer::tim4(peripherals.TIM4, 1.hz(), clocks);
+    let mut timer = Timer::tim5(peripherals.TIM5, 1.hz(), clocks);
+    timer.listen(Event::TimeOut);
+    TIMER_TIM5.put(timer);
 
-    // timer.listen(Event::TimeOut);
-    free(|cs| *TIMER_TIM4.borrow(cs).borrow_mut() = Some(timer));
-
-    stm32::NVIC::unpend(stm32f4xx_hal::interrupt::TIM4);
-
+    stm32::NVIC::unpend(stm32f4xx_hal::interrupt::TIM5);
     unsafe {
-        stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM4);
+        stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
     };
+
+    loop {
+        // wait for any interrupts to happen ("sleep")
+        cortex_m::asm::wfi();
+        free(|cs| EVENT_QUEUE.try_borrow_mut(cs, |q| Some(iprintln!(stim, "Queue: {:?}", q))));
+
+        // handle all pending events
+        while let Some(evt) = free(|cs| EVENT_QUEUE.try_borrow_mut(cs, |f| f.take())) {
+            use InterruptEvent::*;
+            match evt {
+                Tick => {
+                    led.toggle().unwrap();
+                }
+                Encoder(change) => {
+                    iprintln!(stim, "Encoder: {:?}", change);
+                }
+                _ => (),
+            }
+        }
+        // led.toggle().unwrap();
+    }
 
     // let prescaler: u16 = (clocks.sysclk().0 / 32_000_000).try_into().unwrap();
     // tim.psc.modify(|_, w|w.psc().bits(prescaler));
@@ -133,7 +179,6 @@ fn main() -> ! {
     }
 
     // setup sdio interface for sc card
-
     let gpioc = peripherals.GPIOC.split();
     let gpiod = peripherals.GPIOD.split();
 

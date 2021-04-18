@@ -4,14 +4,10 @@ pub struct Clock {
     rtc: stm32f401::RTC,
 }
 
-
 impl Clock {
     pub fn new(reg: stm32f401::RTC) -> Clock {
-        Clock {
-            rtc: reg,
-        }
+        Clock { rtc: reg }
     }
-
 
     pub fn init(&self) -> () {
         // Initialize the RTC clock

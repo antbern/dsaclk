@@ -40,6 +40,13 @@
             "group": "build"
         },
         {
+            "label": "Dropbox ignore target",
+            "type": "process",
+            "command": "attr",
+            "args": ["-s", "com.dropbox.ignored", "-V", "1", "target"],
+            "group": "none"
+        },
+        {
             "label": "Build binary",
             "type": "shell",
             "command": "arm-none-eabi-objcopy",

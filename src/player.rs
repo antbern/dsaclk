@@ -1,13 +1,14 @@
 use cortex_m::{delay::Delay, prelude::_embedded_hal_blocking_delay_DelayMs};
 use stm32f4xx_hal::{
     gpio::{gpiob::PB7, Alternate, AF2},
+    pac::TIM4,
     rcc::Clocks,
     stm32 as stm32f401,
 };
 
 pub struct Player {
     timer: stm32f401::TIM4,
-    pin: PB7<Alternate<AF2>>,
+    _pin: PB7<Alternate<AF2>>,
     psc_freq: u32,
 }
 
@@ -37,7 +38,7 @@ impl Player {
 
         Player {
             timer,
-            pin,
+            _pin: pin,
             psc_freq,
         }
     }
@@ -79,5 +80,9 @@ impl Player {
         self.timer
             .ccmr1_output_mut()
             .modify(|_, w| w.oc2m().force_inactive());
+    }
+
+    pub fn release(self) -> (TIM4, PB7<Alternate<AF2>>) {
+        (self.timer, self._pin)
     }
 }
