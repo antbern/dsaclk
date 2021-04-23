@@ -4,6 +4,8 @@
 Cargo.lock
 target/
 
+datasheets/**
+
 # editor files
 .vscode/*
 !.vscode/*.md

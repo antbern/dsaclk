@@ -18,14 +18,18 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 
 // use cortex_m::asm;
 use cortex_m::delay::Delay;
+use cortex_m::interrupt::free;
 use cortex_m::prelude::*;
-use cortex_m::{interrupt::free, iprint, iprintln};
 use cortex_m_rt::entry;
 
+use core::fmt::Write;
+use core::format_args;
 use player::Player;
 use stm32f4xx_hal::{
     interrupt,
+    pac::USART2,
     prelude::*,
+    serial::{config::Config, Serial, Tx},
     stm32,
     timer::{Event, Timer},
 };
@@ -34,9 +38,26 @@ use util::GlobalCell;
 // global variables to be shared with ISRs
 static ENCODER: GlobalCell<Encoder> = GlobalCell::new(None);
 static TIMER_TIM5: GlobalCell<Timer<stm32::TIM5>> = GlobalCell::new(None);
-// static EVENT_QUEUE: GlobalCell<EventQueue> = GlobalCell::new(Some(EventQueue::new()));
+
+/// UART port used for debug
+static DEBUG_UART_TX: GlobalCell<Tx<USART2>> = GlobalCell::new(None);
 
 static EVENT_QUEUE: EventQueue<32> = EventQueue::new();
+
+/// Logs the formatted string to the debug USART port.
+/// Note: do _not_ use this inside a CriticalSection. Instead, use `logf_cs` and pass in the CriticalSection object
+macro_rules! logf {
+    ($($arg:tt)*) => (
+        free(|cs| DEBUG_UART_TX.try_borrow_mut(cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap()).unwrap()
+    );
+}
+
+/// Logs the formatted string to the debug USART port if already in a CriticalSection
+macro_rules! logf_cs {
+    ($cs:ident, $($arg:tt)*) => (
+        DEBUG_UART_TX.try_borrow_mut($cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap().unwrap()
+    );
+}
 
 #[interrupt]
 fn TIM5() {
@@ -45,6 +66,8 @@ fn TIM5() {
             tim.clear_interrupt(Event::TimeOut);
             Some(())
         });
+
+        // logf_cs!(cs, "Tick!\n");
 
         // put a tich event in the queue as a status indicator for now
         EVENT_QUEUE.put(cs, InterruptEvent::Tick);
@@ -65,21 +88,7 @@ fn TIM5() {
 #[entry]
 fn main() -> ! {
     let peripherals = stm32f4xx_hal::stm32::Peripherals::take().unwrap();
-    let mut peripherals_m = cortex_m::Peripherals::take().unwrap();
-
-    // enable the timer 4 peripheral in RCC before constraining the clock
-    peripherals.RCC.apb1enr.modify(|_, w| w.tim4en().enabled());
-
-    cortex_m::asm::dsb(); // needed to prevent some errors due to optimizations
-                          // reset timer 4 peripheral
-    peripherals
-        .RCC
-        .apb1rstr
-        .modify(|_, w| w.tim4rst().set_bit());
-    peripherals
-        .RCC
-        .apb1rstr
-        .modify(|_, w| w.tim4rst().clear_bit());
+    let peripherals_m = cortex_m::Peripherals::take().unwrap();
 
     let rcc = peripherals.RCC.constrain();
 
@@ -95,11 +104,24 @@ fn main() -> ! {
 
     assert!(clocks.is_pll48clk_valid());
 
-    let stim = &mut peripherals_m.ITM.stim[0];
+    // setup UART communication through the ST-LINK/V2-1 debugger
+    let gpioa = peripherals.GPIOA.split();
+
+    let serial = Serial::new(
+        peripherals.USART2,
+        (
+            gpioa.pa2.into_alternate_af7(),
+            gpioa.pa3.into_alternate_af7(),
+        ),
+        Config::default().baudrate(115200.bps()),
+        clocks,
+    )
+    .unwrap();
+    let (tx, _rx) = serial.split();
+    DEBUG_UART_TX.put(tx);
 
     let mut delay = Delay::new(peripherals_m.SYST, clocks.sysclk().0);
 
-    let gpioa = peripherals.GPIOA.split();
     let mut led = gpioa.pa5.into_push_pull_output();
 
     led.set_high().unwrap();
@@ -126,10 +148,12 @@ fn main() -> ! {
         stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
     };
 
-    loop {
+    'outer: loop {
         // wait for any interrupts to happen ("sleep")
+        // NOTE: makes the debugger having a hard time connecting sometimes
         cortex_m::asm::wfi();
-        free(|cs| iprintln!(stim, "Queue size: {:?}", EVENT_QUEUE.count(cs)));
+
+        free(|cs| logf_cs!(cs, "Queue size: {:?}\n", EVENT_QUEUE.count(cs)));
 
         // handle all pending events
         while let Some(evt) = free(|cs| EVENT_QUEUE.take(cs)) {
@@ -139,22 +163,22 @@ fn main() -> ! {
                     led.toggle().unwrap();
                 }
                 Encoder(change) => {
-                    iprintln!(stim, "Encoder: {:?}", change);
+                    logf!("Encoder: {:?}\n", change);
+                    if change == 2 {
+                        // for development
+                        break 'outer;
+                    }
                 }
                 _ => (),
             }
         }
-        // led.toggle().unwrap();
     }
 
-    // let prescaler: u16 = (clocks.sysclk().0 / 32_000_000).try_into().unwrap();
-    // tim.psc.modify(|_, w|w.psc().bits(prescaler));
-
     // experiment with RTC
-    let mut c = Clock::new(peripherals.RTC);
+    let c = Clock::new(peripherals.RTC);
 
     if !c.is_set() {
-        iprintln!(stim, "RTC is not initialized! Setting up...");
+        logf!("RTC is not initialized! Setting up...\n");
 
         c.init();
     }
@@ -174,7 +198,7 @@ fn main() -> ! {
         match sdio.init_card(stm32f4xx_hal::sdio::ClockFreq::F12Mhz) {
             Ok(_) => break,
             Err(e) => {
-                iprintln!(stim, "Error initializing SD-card: {:?}", e);
+                logf!("Error initializing SD-card: {:?}\n", e);
             }
         }
 
@@ -186,36 +210,32 @@ fn main() -> ! {
 
     // if everything went fine, get a reference to the card and print some debug data
     if let Ok(card) = sdio.card() {
-        iprintln!(stim, "Card successfully initialized! Info: {:?}", card.cid);
+        logf!("Card successfully initialized! Info: {:?}\n", card.cid);
 
         // read block of data and print it
 
         let nblocks = sdio.card().map(|c| c.block_count()).unwrap_or(0);
-        iprintln!(stim, "Card detected: nbr of blocks: {:?}", nblocks);
+        logf!("Card detected: nbr of blocks: {:?}\n", nblocks);
 
         let mut block = [0u8; 512];
         match sdio.read_block(1, &mut block) {
             Ok(_) => (),
             Err(err) => {
-                iprintln!(stim, "Failed to read block: {:?}", err);
+                logf!("Failed to read block: {:?}\n", err);
             }
         }
 
         let mut i = 0;
         for b in block.iter() {
-            iprint!(stim, "{:02X} ", b);
-            // iprint!(stim, "X ");
-
-            // delay to allow ITM to send stuff
-            delay.delay_ms(10);
+            logf!("{:02X} ", b);
 
             if (i + 1) % 16 == 0 {
-                iprintln!(stim);
+                logf!("\n");
             }
             i += 1;
         }
 
-        iprintln!(stim);
+        logf!("\n");
 
         // try to write something to the second block
         for (i, b) in block.iter_mut().enumerate() {
@@ -223,23 +243,23 @@ fn main() -> ! {
         }
 
         // if let Err(e) = sdio.write_block(1, &block) {
-        //     iprintln!(stim, "Failed to write block: {:?}", e);
+        //     logf!("Failed to write block: {:?}\n", e);
         //     loop{}
         // }
     } else {
-        iprintln!(stim, "Card could not be initialized!");
+        logf!("Card could not be initialized!\n");
     }
 
     loop {
         led.set_high().unwrap();
 
-        iprintln!(stim, "On!");
+        logf!("On!\n");
 
         delay.delay_ms(1000);
 
         led.set_low().unwrap();
 
-        iprintln!(stim, "Off!");
+        logf!("Off!\n");
         delay.delay_ms(1000);
     }
 }

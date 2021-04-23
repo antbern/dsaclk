@@ -1,7 +1,8 @@
 use cortex_m::{delay::Delay, prelude::_embedded_hal_blocking_delay_DelayMs};
 use stm32f4xx_hal::{
+    bb,
     gpio::{gpiob::PB7, Alternate, AF2},
-    pac::TIM4,
+    pac::{RCC, TIM4},
     rcc::Clocks,
     stm32 as stm32f401,
 };
@@ -15,6 +16,18 @@ pub struct Player {
 #[allow(dead_code)]
 impl Player {
     pub fn new(timer: stm32f401::TIM4, pin: PB7<Alternate<AF2>>, clocks: &Clocks) -> Player {
+        // NOTE: this is taken from the stm32f4xx-hal crate and used to enable and reset TIM4
+        unsafe {
+            // NOTE(unsafe) this reference will only be used for atomic writes with no side effects.
+            let rcc = &(*RCC::ptr());
+            // Enable and reset clock.
+            bb::set(&rcc.apb1enr, 2);
+            // Stall the pipeline to work around erratum 2.1.13 (DM00037591)
+            cortex_m::asm::dsb();
+            bb::set(&rcc.apb1rstr, 2);
+            bb::clear(&rcc.apb1rstr, 2);
+        }
+
         // setup the clock source to be the internal clock
         timer.smcr.modify(
             |_, w| w.ece().disabled().sms().disabled(), // clock directly from the internal clock
