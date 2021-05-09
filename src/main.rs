@@ -2,28 +2,26 @@
 #![no_main]
 
 mod clock;
+mod defmt_uart;
 mod encoder;
 mod event;
 mod player;
 mod util;
 
 use clock::Clock;
+use defmt::{debug, error, info};
 use encoder::Encoder;
 use event::{EventQueue, InterruptEvent};
-// pick a panicking behavior
-use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
-                     // use panic_abort as _; // requires nightly
-                     // use panic_itm as _; // logs messages over ITM; requires ITM support
-                     // use panic_semihosting as _; // logs messages to the host stderr; requires a debugger
+
+// use panic-probe as panicking behavior which will print panic
+// messages through defmt
+use panic_probe as _;
 
 // use cortex_m::asm;
 use cortex_m::delay::Delay;
 use cortex_m::interrupt::free;
 use cortex_m::prelude::*;
 use cortex_m_rt::entry;
-
-use core::fmt::Write;
-use core::format_args;
 use player::Player;
 use stm32f4xx_hal::{
     interrupt,
@@ -162,6 +160,8 @@ fn main() -> ! {
         stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
     };
 
+    defmt::info!("Initializing!");
+
     'outer: loop {
         // wait for any interrupts to happen ("sleep")
         // NOTE: makes the debugger having a hard time connecting sometimes
@@ -177,13 +177,14 @@ fn main() -> ! {
                     led.toggle().unwrap();
                 }
                 Encoder(change) => {
-                    logf!("Encoder: {:?}\n", change);
+                    // logf!("Encoder: {:?}\n", change);
+                    defmt::info!("Encoder: {=i8}", change);
                     if change == 2 {
                         // for development
                         break 'outer;
                     }
                 }
-                e => logf!("Unhandled event: {:?}\n", e),
+                e => defmt::error!("Unhandled event: {}", e),
             }
         }
     }
@@ -192,7 +193,7 @@ fn main() -> ! {
     let c = Clock::new(peripherals.RTC);
 
     if !c.is_set() {
-        logf!("RTC is not initialized! Setting up...\n");
+        info!("RTC is not initialized! Setting up...");
 
         c.init();
     }
@@ -212,7 +213,7 @@ fn main() -> ! {
         match sdio.init_card(stm32f4xx_hal::sdio::ClockFreq::F12Mhz) {
             Ok(_) => break,
             Err(e) => {
-                logf!("Error initializing SD-card: {:?}\n", e);
+                defmt::error!("Error initializing SD-card: {}", defmt::Debug2Format(&e));
             }
         }
 
@@ -224,30 +225,33 @@ fn main() -> ! {
 
     // if everything went fine, get a reference to the card and print some debug data
     if let Ok(card) = sdio.card() {
-        logf!("Card successfully initialized! Info: {:?}\n", card.cid);
+        info!(
+            "Card successfully initialized! Info: {}",
+            defmt::Debug2Format(&card.cid)
+        );
 
         // read block of data and print it
 
         let nblocks = sdio.card().map(|c| c.block_count()).unwrap_or(0);
-        logf!("Card detected: nbr of blocks: {:?}\n", nblocks);
+        info!("Card detected: nbr of blocks: {=u32}", nblocks);
 
         let mut block = [0u8; 512];
         match sdio.read_block(1, &mut block) {
             Ok(_) => (),
             Err(err) => {
-                logf!("Failed to read block: {:?}\n", err);
+                error!("Failed to read block: {}", defmt::Debug2Format(&err));
             }
         }
 
-        for (i, b) in block.iter().enumerate() {
-            logf!("{:02X} ", b);
+        for i in (0..512).step_by(16) {
+            debug!("{=[u8]:X} ", block[i..i + 16]);
 
-            if (i + 1) % 16 == 0 {
-                logf!("\n");
-            }
+            // if (i + 1) % 16 == 0 {
+            //     logf!("\n");
+            // }
         }
 
-        logf!("\n");
+        // logf!("\n");
 
         // try to write something to the second block
         for (i, b) in block.iter_mut().enumerate() {
@@ -259,19 +263,14 @@ fn main() -> ! {
         //     loop{}
         // }
     } else {
-        logf!("Card could not be initialized!\n");
+        error!("Card could not be initialized!");
     }
 
     loop {
         led.set_high().unwrap();
-
-        // logf!("On!\n");
-
         delay.delay_ms(1000);
 
         led.set_low().unwrap();
-
-        // logf!("Off!\n");
         delay.delay_ms(1000);
     }
 }
