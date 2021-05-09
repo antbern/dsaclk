@@ -12,3 +12,17 @@ The idea is to construct an alarm clock that can be used to record and analyze s
 - [Rusted brains: Running Rust firmware on a Cortex-M microcontroller](https://dev.to/minkovsky/rusted-brains-running-rust-firmware-on-a-cortex-m-microcontroller-3had)
 
 This probject is based on the [cortex-m-quickstart](https://github.com/rust-embedded/cortex-m-quickstart) template repository.
+
+
+## Useful commands
+
+See size of the different sections (requires [cargo-binutils](https://github.com/rust-embedded/cargo-binutils))
+```
+cargo size --release -- -A
+```
+
+
+Run clippy and treat warnings as errors
+```
+cargo clippy -- -D warnings
+```
