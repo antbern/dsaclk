@@ -6,6 +6,8 @@ use cortex_m::interrupt::{CriticalSection, Mutex};
 pub enum InterruptEvent {
     Tick,
     Encoder(i8),
+    ShortPress,
+    LongPress,
 }
 /// Inner implementation for EventQueue protected by a Mutex for inner mutability
 #[derive(Debug)]

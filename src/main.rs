@@ -35,6 +35,9 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
+const POLL_FREQ: u32 = 10;
+const LONG_PRESS_DURATION: u32 = 2;
+
 // global variables to be shared with ISRs
 static ENCODER: GlobalCell<Encoder> = GlobalCell::new(None);
 static TIMER_TIM5: GlobalCell<Timer<stm32::TIM5>> = GlobalCell::new(None);
@@ -46,6 +49,7 @@ static EVENT_QUEUE: EventQueue<32> = EventQueue::new();
 
 /// Logs the formatted string to the debug USART port.
 /// Note: do _not_ use this inside a CriticalSection. Instead, use `logf_cs` and pass in the CriticalSection object
+#[allow(unused_macros)]
 macro_rules! logf {
     ($($arg:tt)*) => (
         free(|cs| DEBUG_UART_TX.try_borrow_mut(cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap()).unwrap()
@@ -53,6 +57,7 @@ macro_rules! logf {
 }
 
 /// Logs the formatted string to the debug USART port if already in a CriticalSection
+#[allow(unused_macros)]
 macro_rules! logf_cs {
     ($cs:ident, $($arg:tt)*) => (
         DEBUG_UART_TX.try_borrow_mut($cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap().unwrap()
@@ -75,11 +80,19 @@ fn TIM5() {
         // // poll the quadrature encoder to see if any change was made
         ENCODER.try_borrow_mut(cs, |enc| {
             if let Some(change) = enc.check() {
-                // yes, post an event to the main loop
-
-                // EVT_QUEUE.borrow(cs).put(InterruptEvent::Encoder(change));
                 EVENT_QUEUE.put(cs, InterruptEvent::Encoder(change));
             }
+
+            if let Some(evt) = enc.check_btn(LONG_PRESS_DURATION * POLL_FREQ) {
+                EVENT_QUEUE.put(
+                    cs,
+                    match evt {
+                        encoder::Button::ShortPress => InterruptEvent::ShortPress,
+                        encoder::Button::LongPress => InterruptEvent::LongPress,
+                    },
+                );
+            }
+
             Some(())
         });
     })
@@ -137,9 +150,10 @@ fn main() -> ! {
         peripherals.TIM3,
         gpiob.pb4.into_alternate_af2().internal_pull_up(true),
         gpiob.pb5.into_alternate_af2().internal_pull_up(true),
+        gpiob.pb14.into_pull_down_input(),
     ));
 
-    let mut timer = Timer::tim5(peripherals.TIM5, 1.hz(), clocks);
+    let mut timer = Timer::tim5(peripherals.TIM5, POLL_FREQ.hz(), clocks);
     timer.listen(Event::TimeOut);
     TIMER_TIM5.put(timer);
     // enable TIM5 interrupt in the NVIC
@@ -153,7 +167,7 @@ fn main() -> ! {
         // NOTE: makes the debugger having a hard time connecting sometimes
         cortex_m::asm::wfi();
 
-        free(|cs| logf_cs!(cs, "Queue size: {:?}\n", EVENT_QUEUE.count(cs)));
+        // free(|cs| logf_cs!(cs, "Queue size: {:?}\n", EVENT_QUEUE.count(cs)));
 
         // handle all pending events
         while let Some(evt) = free(|cs| EVENT_QUEUE.take(cs)) {
@@ -169,7 +183,7 @@ fn main() -> ! {
                         break 'outer;
                     }
                 }
-                _ => (),
+                e => logf!("Unhandled event: {:?}\n", e),
             }
         }
     }
@@ -225,14 +239,12 @@ fn main() -> ! {
             }
         }
 
-        let mut i = 0;
-        for b in block.iter() {
+        for (i, b) in block.iter().enumerate() {
             logf!("{:02X} ", b);
 
             if (i + 1) % 16 == 0 {
                 logf!("\n");
             }
-            i += 1;
         }
 
         logf!("\n");
@@ -253,13 +265,13 @@ fn main() -> ! {
     loop {
         led.set_high().unwrap();
 
-        logf!("On!\n");
+        // logf!("On!\n");
 
         delay.delay_ms(1000);
 
         led.set_low().unwrap();
 
-        logf!("Off!\n");
+        // logf!("Off!\n");
         delay.delay_ms(1000);
     }
 }
