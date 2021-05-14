@@ -26,3 +26,26 @@ Run clippy and treat warnings as errors
 ```
 cargo clippy -- -D warnings
 ```
+
+
+### Using `defmt`
+
+Install [`defmt-print`](https://crates.io/crates/defmt-print)
+```bash
+cargo install defmt-print
+```
+
+Pipe the serial port output through `defmt-print` directly
+```bash
+cat /dev/ttyACM0 | defmt-print -e target/thumb*/debug/dsaclk
+```
+or use the bash script that additionally configures the TTY device in raw mode
+```bash
+./defmt_uart.sh /dev/ttyACM0
+```
+
+Useful links:
+
+* [knurling-rs/app-template](https://github.com/knurling-rs/app-template)
+* [defmt book](https://defmt-next.ferrous-systems.com/)
+* https://ferrous-systems.com/blog/defmt/

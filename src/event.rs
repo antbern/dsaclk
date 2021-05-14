@@ -2,7 +2,7 @@ use core::{cell::RefCell, usize};
 
 use cortex_m::interrupt::{CriticalSection, Mutex};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, defmt::Format)]
 pub enum InterruptEvent {
     Tick,
     Encoder(i8),
