@@ -3,6 +3,7 @@
 
 mod clock;
 mod defmt_uart;
+mod display;
 mod encoder;
 mod event;
 mod player;
@@ -24,6 +25,7 @@ use cortex_m::prelude::*;
 use cortex_m_rt::entry;
 use player::Player;
 use stm32f4xx_hal::{
+    i2c::I2c,
     interrupt,
     pac::USART2,
     prelude::*,
@@ -32,6 +34,8 @@ use stm32f4xx_hal::{
     timer::{Event, Timer},
 };
 use util::GlobalCell;
+
+use crate::display::I2CLCDDisplay;
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -72,7 +76,7 @@ fn TIM5() {
 
         // logf_cs!(cs, "Tick!\n");
 
-        // put a tich event in the queue as a status indicator for now
+        // put a tick event in the queue as a status indicator for now
         EVENT_QUEUE.put(cs, InterruptEvent::Tick);
 
         // // poll the quadrature encoder to see if any change was made
@@ -159,6 +163,32 @@ fn main() -> ! {
     unsafe {
         stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
     };
+
+    // setup I2C
+    let i2c = I2c::new(
+        peripherals.I2C1,
+        (
+            gpiob.pb8.into_alternate_af4().set_open_drain(),
+            gpiob.pb9.into_alternate_af4().set_open_drain(),
+        ),
+        100.khz(),
+        clocks,
+    );
+
+    let mut display = I2CLCDDisplay::new(i2c, 0x63, 4, 20);
+
+    display.set_backlight_enabled(true).unwrap();
+    for i in (0..=255).step_by(8) {
+        display.set_backlight_brightness(i).unwrap();
+        delay.delay_ms(100);
+    }
+
+    for i in (0..=255).rev().step_by(8) {
+        display.set_backlight_brightness(i).unwrap();
+        delay.delay_ms(100);
+    }
+
+    display.set_backlight_enabled(false).unwrap();
 
     defmt::info!("Initializing!");
 
