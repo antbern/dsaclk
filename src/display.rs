@@ -20,6 +20,12 @@ pub struct BufferedDisplay<const ROWS: usize, const COLUMNS: usize> {
 pub enum BufferedDisplayError {
     OutOfBounds,
 }
+#[allow(dead_code)]
+pub enum CursorMode {
+    Underline,
+    Blinking,
+    Off,
+}
 
 impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
     pub const fn new() -> Self {
