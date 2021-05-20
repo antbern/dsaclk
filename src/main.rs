@@ -35,7 +35,7 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
-use crate::display::I2CLCDDisplay;
+use crate::display::{Display, I2CDisplayDriver};
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -175,7 +175,8 @@ fn main() -> ! {
         clocks,
     );
 
-    let mut display = I2CLCDDisplay::new(i2c, 0x63, 4, 20);
+    let mut display = I2CDisplayDriver::new(i2c, 0x63, 4, 20);
+    display.set_type(4, &mut delay).unwrap();
 
     display.set_backlight_enabled(true).unwrap();
     for i in (0..=255).step_by(8) {
@@ -189,6 +190,16 @@ fn main() -> ! {
     }
 
     display.set_backlight_enabled(false).unwrap();
+
+    // write stuff to the screen
+    let mut disp: display::BufferedDisplay<4, 20> = display::BufferedDisplay::new();
+    disp.set_cursor_position(0, 0).unwrap();
+    disp.write("Hello".as_bytes()).unwrap();
+
+    disp.set_cursor_position(1, 0).unwrap();
+    disp.write("World".as_bytes()).unwrap();
+
+    disp.apply(&mut display).unwrap();
 
     defmt::info!("Initializing!");
 
