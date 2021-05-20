@@ -3,6 +3,7 @@
 
 mod clock;
 mod defmt_uart;
+mod display;
 mod encoder;
 mod event;
 mod player;
@@ -24,6 +25,7 @@ use cortex_m::prelude::*;
 use cortex_m_rt::entry;
 use player::Player;
 use stm32f4xx_hal::{
+    i2c::I2c,
     interrupt,
     pac::USART2,
     prelude::*,
@@ -32,6 +34,10 @@ use stm32f4xx_hal::{
     timer::{Event, Timer},
 };
 use util::GlobalCell;
+
+use core::fmt::Write;
+
+use crate::display::{Display, I2CDisplayDriver};
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -72,7 +78,7 @@ fn TIM5() {
 
         // logf_cs!(cs, "Tick!\n");
 
-        // put a tich event in the queue as a status indicator for now
+        // put a tick event in the queue as a status indicator for now
         EVENT_QUEUE.put(cs, InterruptEvent::Tick);
 
         // // poll the quadrature encoder to see if any change was made
@@ -160,6 +166,34 @@ fn main() -> ! {
         stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
     };
 
+    // setup I2C
+    let i2c = I2c::new(
+        peripherals.I2C1,
+        (
+            gpiob.pb8.into_alternate_af4().set_open_drain(),
+            gpiob.pb9.into_alternate_af4().set_open_drain(),
+        ),
+        100.khz(),
+        clocks,
+    );
+
+    let mut display = I2CDisplayDriver::new(i2c, 0x63, 4, 20);
+    display.set_type(4, &mut delay).unwrap();
+    display.set_cursor_mode(display::CursorMode::Off).unwrap();
+
+    display.set_backlight_brightness(64).unwrap();
+    display.set_backlight_enabled(true).unwrap();
+
+    // write stuff to the screen
+    let mut disp: display::BufferedDisplay<4, 20> = display::BufferedDisplay::new();
+    disp.set_cursor_position(0, 0).unwrap();
+    disp.write("Hello".as_bytes()).unwrap();
+
+    disp.set_cursor_position(1, 0).unwrap();
+    disp.write("World".as_bytes()).unwrap();
+
+    disp.apply(&mut display).unwrap();
+
     defmt::info!("Initializing!");
 
     'outer: loop {
@@ -183,10 +217,19 @@ fn main() -> ! {
                         // for development
                         break 'outer;
                     }
+
+                    // print the value to the screen
+                    disp.set_cursor_position(2, 0).unwrap();
+
+                    write!(disp, "{:>2}", change).unwrap();
+                    // disp.write(&[change as u8 + '0' as u8]).unwrap();
                 }
                 e => defmt::error!("Unhandled event: {}", e),
             }
         }
+
+        // update the display after processing all events
+        disp.apply(&mut display).unwrap();
     }
 
     // experiment with RTC

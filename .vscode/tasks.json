@@ -44,7 +44,8 @@
             "type": "process",
             "command": "attr",
             "args": ["-s", "com.dropbox.ignored", "-V", "1", "target"],
-            "group": "none"
+            "group": "none",
+            "problemMatcher": []
         },
         {
             "label": "Build binary",
