@@ -1,3 +1,5 @@
+use core::fmt;
+
 use embedded_hal::blocking::{delay::DelayMs, i2c};
 
 pub trait Display {
@@ -116,6 +118,14 @@ impl<I: i2c::Write> I2CDisplayDriver<I> {
         Ok(())
     }
 
+    pub fn set_cursor_mode(&mut self, mode: CursorMode) -> Result<(), I::Error> {
+        match mode {
+            CursorMode::Underline => self.cmd(0x05),
+            CursorMode::Blinking => self.cmd(0x06),
+            CursorMode::Off => self.cmd(0x04),
+        }
+    }
+
     pub fn set_backlight_enabled(&mut self, on: bool) -> Result<(), I::Error> {
         match on {
             true => self.cmd(0x13),
@@ -156,6 +166,12 @@ impl<I: i2c::Write> Display for I2CDisplayDriver<I> {
             self.cmd(c)?;
         }
         Ok(())
+    }
+}
+
+impl<const ROWS: usize, const COLUMNS: usize> core::fmt::Write for BufferedDisplay<ROWS, COLUMNS> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.write(s.as_bytes()).map_err(|_| fmt::Error)
     }
 }
 

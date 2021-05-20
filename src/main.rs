@@ -35,6 +35,8 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
+use core::fmt::Write;
+
 use crate::display::{Display, I2CDisplayDriver};
 
 const POLL_FREQ: u32 = 10;
@@ -177,19 +179,10 @@ fn main() -> ! {
 
     let mut display = I2CDisplayDriver::new(i2c, 0x63, 4, 20);
     display.set_type(4, &mut delay).unwrap();
+    display.set_cursor_mode(display::CursorMode::Off).unwrap();
 
+    display.set_backlight_brightness(64).unwrap();
     display.set_backlight_enabled(true).unwrap();
-    for i in (0..=255).step_by(8) {
-        display.set_backlight_brightness(i).unwrap();
-        delay.delay_ms(100);
-    }
-
-    for i in (0..=255).rev().step_by(8) {
-        display.set_backlight_brightness(i).unwrap();
-        delay.delay_ms(100);
-    }
-
-    display.set_backlight_enabled(false).unwrap();
 
     // write stuff to the screen
     let mut disp: display::BufferedDisplay<4, 20> = display::BufferedDisplay::new();
@@ -224,10 +217,19 @@ fn main() -> ! {
                         // for development
                         break 'outer;
                     }
+
+                    // print the value to the screen
+                    disp.set_cursor_position(2, 0).unwrap();
+
+                    write!(disp, "{:>2}", change).unwrap();
+                    // disp.write(&[change as u8 + '0' as u8]).unwrap();
                 }
                 e => defmt::error!("Unhandled event: {}", e),
             }
         }
+
+        // update the display after processing all events
+        disp.apply(&mut display).unwrap();
     }
 
     // experiment with RTC
