@@ -139,6 +139,17 @@ fn main() -> ! {
     let peripherals = stm32f4xx_hal::stm32::Peripherals::take().unwrap();
     let peripherals_m = cortex_m::Peripherals::take().unwrap();
 
+    // TEMP: Setup RTC clock
+    peripherals.RCC.apb1enr.modify(|_, w| w.pwren().enabled());
+    peripherals.PWR.cr.modify(|_, w| w.dbp().set_bit());
+    peripherals
+        .RCC
+        .bdcr
+        .modify(|_, w| w.lseon().on().rtcsel().lse());
+
+    while peripherals.RCC.bdcr.read().lserdy().is_not_ready() {}
+    peripherals.RCC.bdcr.modify(|_, w| w.rtcen().enabled());
+
     let rcc = peripherals.RCC.constrain();
 
     let clocks = rcc
@@ -200,7 +211,7 @@ fn main() -> ! {
     };
 
     // experiment with RTC
-    let c = Clock::new(peripherals.RTC);
+    let mut c = Clock::new(peripherals.RTC);
 
     if !c.is_set() {
         info!("RTC is not initialized! Setting up...");
@@ -263,6 +274,11 @@ fn main() -> ! {
             match evt {
                 Tick => {
                     led.toggle().unwrap();
+
+                    // print the value to the screen
+                    disp.set_cursor_position(3, 0).unwrap();
+
+                    write!(disp, "{:>2}", c.get_su()).unwrap();
                 }
                 Encoder(change) => {
                     let mut c = change;
