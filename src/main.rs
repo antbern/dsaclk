@@ -186,6 +186,7 @@ fn main() -> ! {
 
     // write stuff to the screen
     let mut disp: display::BufferedDisplay<4, 20> = display::BufferedDisplay::new();
+    disp.clear().unwrap();
     disp.set_cursor_position(0, 0).unwrap();
     disp.write("Hello".as_bytes()).unwrap();
 
@@ -221,9 +222,10 @@ fn main() -> ! {
                     // print the value to the screen
                     disp.set_cursor_position(2, 0).unwrap();
 
-                    write!(disp, "{:>2}", change).unwrap();
+                    write!(disp, "{:>3}", change).unwrap();
                     // disp.write(&[change as u8 + '0' as u8]).unwrap();
                 }
+                LongPress => disp.clear().unwrap(),
                 e => defmt::error!("Unhandled event: {}", e),
             }
         }
