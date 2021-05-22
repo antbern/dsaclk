@@ -41,9 +41,6 @@ impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
         // iterate over all rows and write them out
         let mut set_pos = true;
         for row in 0..ROWS {
-            target.set_cursor_position(row as u8, 0)?;
-            target.write(&self.backing_buffer[row as usize])?;
-
             for col in 0..COLUMNS {
                 if &self.backing_buffer[row][col] == &self.visible_buffer[row][col] {
                     set_pos = true;
@@ -54,7 +51,7 @@ impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
                     }
 
                     target.write(&[self.backing_buffer[row][col]])?;
-                    self.backing_buffer[row][col] = self.visible_buffer[row][col];
+                    self.visible_buffer[row][col] = self.backing_buffer[row][col];
                 }
             }
         }
