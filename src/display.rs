@@ -37,8 +37,9 @@ impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
         }
     }
     //
-    pub fn apply<D: Display>(&mut self, target: &mut D) -> Result<(), D::Error> {
+    pub fn apply<D: Display>(&mut self, target: &mut D) -> Result<bool, D::Error> {
         // iterate over all rows and write them out
+        let mut changed = false;
         let mut set_pos = true;
         for row in 0..ROWS {
             for col in 0..COLUMNS {
@@ -52,11 +53,20 @@ impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
 
                     target.write(&[self.backing_buffer[row][col]])?;
                     self.visible_buffer[row][col] = self.backing_buffer[row][col];
+                    changed = true;
                 }
             }
         }
 
-        Ok(())
+        Ok(changed)
+    }
+
+    fn force_redraw(&mut self) {
+        for row in 0..ROWS {
+            for col in 0..COLUMNS {
+                self.visible_buffer[row][col] = 0;
+            }
+        }
     }
 }
 
@@ -67,7 +77,6 @@ impl<const ROWS: usize, const COLUMNS: usize> Display for BufferedDisplay<ROWS, 
         for row in 0..ROWS {
             for col in 0..COLUMNS {
                 self.backing_buffer[row][col] = ' ' as u8;
-                self.visible_buffer[row][col] = 0;
             }
         }
 

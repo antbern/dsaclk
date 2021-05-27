@@ -6,6 +6,7 @@ mod defmt_uart;
 mod display;
 mod encoder;
 mod event;
+mod panel;
 mod player;
 mod util;
 
@@ -35,9 +36,11 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
-use core::fmt::Write;
+// use core::fmt::Write;
 
 use crate::display::{Display, I2CDisplayDriver};
+use crate::panel::CursorState;
+use crate::panel::Panel;
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -66,6 +69,17 @@ macro_rules! logf_cs {
     ($cs:ident, $($arg:tt)*) => (
         DEBUG_UART_TX.try_borrow_mut($cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap().unwrap()
     );
+}
+
+pub struct SharedState {
+    clock: Clock,
+    // display: I2CDisplayDriver<T>,
+    hour_h: u8,
+    hour_l: u8,
+    minute_h: u8,
+    minute_l: u8,
+    second_h: u8,
+    second_l: u8,
 }
 
 #[interrupt]
@@ -166,6 +180,15 @@ fn main() -> ! {
         stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
     };
 
+    // experiment with RTC
+    let c = Clock::new(peripherals.RTC);
+
+    if !c.is_set() {
+        info!("RTC is not initialized! Setting up...");
+
+        c.init();
+    }
+
     // setup I2C
     let i2c = I2c::new(
         peripherals.I2C1,
@@ -197,6 +220,24 @@ fn main() -> ! {
 
     defmt::info!("Initializing!");
 
+    // setup stuff for the menu system
+    let manager: &mut dyn Panel<display::BufferedDisplay<4, 20>> =
+        &mut panel::time::TimePanel::new();
+
+    // setup the shared state
+    let mut panel_state = SharedState {
+        clock: c,
+        // display: display,
+        hour_h: 0,
+        hour_l: 0,
+        minute_h: 0,
+        minute_l: 0,
+        second_h: 0,
+        second_l: 0,
+    };
+
+    let mut last_cursor_state = CursorState::Off;
+
     'outer: loop {
         // wait for any interrupts to happen ("sleep")
         // NOTE: makes the debugger having a hard time connecting sometimes
@@ -212,35 +253,59 @@ fn main() -> ! {
                     led.toggle().unwrap();
                 }
                 Encoder(change) => {
+                    let mut c = change;
+                    while c > 0 {
+                        manager.next(&mut panel_state);
+                        c -= 1;
+                    }
+
+                    while c < 0 {
+                        manager.previous(&mut panel_state);
+                        c += 1;
+                    }
+
                     // logf!("Encoder: {:?}\n", change);
                     defmt::info!("Encoder: {=i8}", change);
-                    if change == 2 {
+                    if change == 10 {
                         // for development
                         break 'outer;
                     }
-
-                    // print the value to the screen
-                    disp.set_cursor_position(2, 0).unwrap();
-
-                    write!(disp, "{:>3}", change).unwrap();
-                    // disp.write(&[change as u8 + '0' as u8]).unwrap();
                 }
-                LongPress => disp.clear().unwrap(),
-                e => defmt::error!("Unhandled event: {}", e),
+                LongPress => manager.leave(&mut panel_state),
+                ShortPress => manager.enter(&mut panel_state),
             }
         }
 
+        disp.clear().unwrap();
+
+        manager.display(&mut disp, &mut panel_state).unwrap();
+
         // update the display after processing all events
-        disp.apply(&mut display).unwrap();
-    }
+        let changed = disp.apply(&mut display).unwrap();
 
-    // experiment with RTC
-    let c = Clock::new(peripherals.RTC);
+        // set the cursor mode if the screen was modified of the cursor state changed
+        let cursor_state = manager.get_cursor_state(&&panel_state);
 
-    if !c.is_set() {
-        info!("RTC is not initialized! Setting up...");
-
-        c.init();
+        if changed || cursor_state != last_cursor_state {
+            match cursor_state {
+                panel::CursorState::Off => {
+                    display.set_cursor_mode(display::CursorMode::Off).unwrap()
+                }
+                panel::CursorState::Underline(r, c) => {
+                    display.set_cursor_position(r, c).unwrap();
+                    display
+                        .set_cursor_mode(display::CursorMode::Underline)
+                        .unwrap();
+                }
+                panel::CursorState::Blinking(r, c) => {
+                    display.set_cursor_position(r, c).unwrap();
+                    display
+                        .set_cursor_mode(display::CursorMode::Blinking)
+                        .unwrap();
+                }
+            }
+        }
+        last_cursor_state = cursor_state;
     }
 
     // setup sdio interface for sc card
