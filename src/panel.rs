@@ -1,6 +1,15 @@
 use crate::display::Display;
 use crate::SharedState;
 
+const STR_DECIMAL_10: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+const STR_DECIMAL_60: [&str; 60] = [
+    "00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15",
+    "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31",
+    "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47",
+    "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59",
+];
+
 pub enum Panels {
     Time,
     Alarm,
@@ -28,12 +37,9 @@ pub mod time {
     use super::CursorState;
 
     enum SelectedField {
-        HourH,
-        HourL,
-        MinuteH,
-        MinuteL,
-        SecondH,
-        SecondL,
+        Hour,
+        Minute,
+        Second,
     }
 
     pub struct TimePanel {
@@ -45,7 +51,7 @@ pub mod time {
         pub fn new() -> Self {
             TimePanel {
                 in_edit: false,
-                selected: SelectedField::HourH,
+                selected: SelectedField::Hour,
             }
         }
     }
@@ -62,21 +68,15 @@ pub mod time {
         fn next(&mut self, state: &mut SharedState) {
             if self.in_edit {
                 match self.selected {
-                    SelectedField::HourH => DecF::next(&mut state.hour_h),
-                    SelectedField::HourL => DecF::next(&mut state.hour_l),
-                    SelectedField::MinuteH => DecF::next(&mut state.minute_h),
-                    SelectedField::MinuteL => DecF::next(&mut state.minute_l),
-                    SelectedField::SecondH => DecF::next(&mut state.second_h),
-                    SelectedField::SecondL => DecF::next(&mut state.second_l),
+                    SelectedField::Hour => DecF::next(&mut state.hour, 23),
+                    SelectedField::Minute => DecF::next(&mut state.minute, 59),
+                    SelectedField::Second => DecF::next(&mut state.second, 59),
                 }
             } else {
                 self.selected = match self.selected {
-                    SelectedField::HourH => SelectedField::HourL,
-                    SelectedField::HourL => SelectedField::MinuteH,
-                    SelectedField::MinuteH => SelectedField::MinuteL,
-                    SelectedField::MinuteL => SelectedField::SecondH,
-                    SelectedField::SecondH => SelectedField::SecondL,
-                    SelectedField::SecondL => SelectedField::HourH,
+                    SelectedField::Hour => SelectedField::Minute,
+                    SelectedField::Minute => SelectedField::Second,
+                    SelectedField::Second => SelectedField::Hour,
                 }
             }
         }
@@ -84,21 +84,15 @@ pub mod time {
         fn previous(&mut self, state: &mut SharedState) {
             if self.in_edit {
                 match self.selected {
-                    SelectedField::HourH => DecF::previous(&mut state.hour_h),
-                    SelectedField::HourL => DecF::previous(&mut state.hour_l),
-                    SelectedField::MinuteH => DecF::previous(&mut state.minute_h),
-                    SelectedField::MinuteL => DecF::previous(&mut state.minute_l),
-                    SelectedField::SecondH => DecF::previous(&mut state.second_h),
-                    SelectedField::SecondL => DecF::previous(&mut state.second_l),
+                    SelectedField::Hour => DecF::previous(&mut state.hour, 23),
+                    SelectedField::Minute => DecF::previous(&mut state.minute, 59),
+                    SelectedField::Second => DecF::previous(&mut state.second, 59),
                 }
             } else {
                 self.selected = match self.selected {
-                    SelectedField::HourH => SelectedField::SecondL,
-                    SelectedField::HourL => SelectedField::HourH,
-                    SelectedField::MinuteH => SelectedField::HourL,
-                    SelectedField::MinuteL => SelectedField::MinuteH,
-                    SelectedField::SecondH => SelectedField::MinuteL,
-                    SelectedField::SecondL => SelectedField::SecondH,
+                    SelectedField::Hour => SelectedField::Second,
+                    SelectedField::Minute => SelectedField::Hour,
+                    SelectedField::Second => SelectedField::Minute,
                 }
             }
         }
@@ -108,28 +102,21 @@ pub mod time {
             disp.write(b"Time")?;
 
             disp.set_cursor_position(2, 3)?;
-            disp.write(DecF::get_str(state.hour_h).as_bytes())?;
-            disp.write(DecF::get_str(state.hour_l).as_bytes())?;
+            disp.write(DecF::get_str(state.hour, 23).as_bytes())?;
             disp.write(b":")?;
-            disp.write(DecF::get_str(state.minute_h).as_bytes())?;
-            disp.write(DecF::get_str(state.minute_l).as_bytes())?;
+            disp.write(DecF::get_str(state.minute, 59).as_bytes())?;
             disp.write(b":")?;
-            disp.write(DecF::get_str(state.second_h).as_bytes())?;
-            disp.write(DecF::get_str(state.second_l).as_bytes())?;
+            disp.write(DecF::get_str(state.second, 59).as_bytes())?;
 
-            // set the cursor to the selected
             Ok(())
         }
 
         fn get_cursor_state(&self, _state: &SharedState) -> CursorState {
             let row = 2;
             let col = 3 + match self.selected {
-                SelectedField::HourH => 0,
-                SelectedField::HourL => 1,
-                SelectedField::MinuteH => 3,
-                SelectedField::MinuteL => 4,
-                SelectedField::SecondH => 6,
-                SelectedField::SecondL => 7,
+                SelectedField::Hour => 1,
+                SelectedField::Minute => 4,
+                SelectedField::Second => 7,
             };
 
             match self.in_edit {
@@ -163,8 +150,42 @@ impl OnOffF {
 struct DecF {}
 
 impl DecF {
+    fn next(state: &mut u8, max: u8) {
+        if *state >= max - 1 {
+            *state = 0
+        } else {
+            *state += 1
+        }
+    }
+
+    fn previous(state: &mut u8, max: u8) {
+        if *state == 0 {
+            *state = max
+        } else {
+            *state -= 1
+        }
+    }
+
+    fn get_str(state: u8, max: u8) -> &'static str {
+        if max < 10 {
+            match state {
+                n if n <= max => STR_DECIMAL_10[n as usize],
+                _ => "?",
+            }
+        } else {
+            match state {
+                n if n <= max && max < 60 => STR_DECIMAL_60[n as usize],
+                _ => "??",
+            }
+        }
+    }
+}
+
+struct WeekdayF {}
+
+impl WeekdayF {
     fn next(state: &mut u8) {
-        if *state >= 9 {
+        if *state >= 6 {
             *state = 0
         } else {
             *state += 1
@@ -173,7 +194,7 @@ impl DecF {
 
     fn previous(state: &mut u8) {
         if *state == 0 {
-            *state = 9
+            *state = 6
         } else {
             *state -= 1
         }
@@ -181,17 +202,14 @@ impl DecF {
 
     fn get_str(state: u8) -> &'static str {
         match state {
-            0 => "0",
-            1 => "1",
-            2 => "2",
-            3 => "3",
-            4 => "4",
-            5 => "5",
-            6 => "6",
-            7 => "7",
-            8 => "8",
-            9 => "9",
-            _ => "X",
+            0 => "MON",
+            1 => "TUE",
+            2 => "WED",
+            3 => "THU",
+            4 => "FRI",
+            5 => "SAT",
+            6 => "SUN",
+            _ => "XXX",
         }
     }
 }

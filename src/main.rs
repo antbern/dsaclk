@@ -73,13 +73,9 @@ macro_rules! logf_cs {
 
 pub struct SharedState {
     clock: Clock,
-    // display: I2CDisplayDriver<T>,
-    hour_h: u8,
-    hour_l: u8,
-    minute_h: u8,
-    minute_l: u8,
-    second_h: u8,
-    second_l: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
 }
 
 #[interrupt]
@@ -227,13 +223,9 @@ fn main() -> ! {
     // setup the shared state
     let mut panel_state = SharedState {
         clock: c,
-        // display: display,
-        hour_h: 0,
-        hour_l: 0,
-        minute_h: 0,
-        minute_l: 0,
-        second_h: 0,
-        second_l: 0,
+        hour: 0,
+        minute: 0,
+        second: 0,
     };
 
     let mut last_cursor_state = CursorState::Off;
