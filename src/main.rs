@@ -10,7 +10,7 @@ mod panel;
 mod player;
 mod util;
 
-use clock::Clock;
+use clock::{Clock, ClockState};
 use defmt::{debug, error, info};
 use encoder::Encoder;
 use event::{EventQueue, InterruptEvent};
@@ -69,30 +69,6 @@ macro_rules! logf_cs {
     ($cs:ident, $($arg:tt)*) => (
         DEBUG_UART_TX.try_borrow_mut($cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap().unwrap()
     );
-}
-#[derive(Debug)]
-pub struct ClockState {
-    hour: u8,
-    minute: u8,
-    second: u8,
-    weekday: u8,
-    day: u8,
-    month: u8,
-    year: u8,
-}
-
-impl Default for ClockState {
-    fn default() -> Self {
-        ClockState {
-            hour: 0,
-            minute: 0,
-            second: 0,
-            weekday: 1,
-            day: 1,
-            month: 1,
-            year: 0,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -256,10 +232,12 @@ fn main() -> ! {
 
     // setup the shared state
     let mut panel_state = SharedState {
-        clock: Default::default(),
+        clock: c.get_state(),
     };
 
     let mut last_cursor_state = CursorState::Off;
+
+    let mut last_edit_state = false;
 
     'outer: loop {
         // wait for any interrupts to happen ("sleep")
@@ -275,10 +253,16 @@ fn main() -> ! {
                 Tick => {
                     led.toggle().unwrap();
 
-                    // print the value to the screen
-                    disp.set_cursor_position(3, 0).unwrap();
+                    // fetch the current date and time from the clock if the panel is not editing
+                    if last_edit_state && !manager.is_editing() {
+                        c.set_state(panel_state.clock);
+                    }
 
-                    write!(disp, "{:>2}", c.get_su()).unwrap();
+                    if !manager.is_editing() {
+                        panel_state.clock = c.get_state();
+                    }
+
+                    last_edit_state = manager.is_editing();
                 }
                 Encoder(change) => {
                     let mut c = change;

@@ -28,6 +28,7 @@ pub trait Panel<D: Display> {
     fn leave(&mut self, state: &mut SharedState);
     fn display(&self, disp: &mut D, state: &mut SharedState) -> Result<(), D::Error>;
     fn get_cursor_state(&self, state: &SharedState) -> CursorState;
+    fn is_editing(&self) -> bool;
 }
 
 pub mod time {
@@ -167,6 +168,10 @@ pub mod time {
                 true => CursorState::Blinking(row, col),
                 false => CursorState::Underline(row, col),
             }
+        }
+
+        fn is_editing(&self) -> bool {
+            self.in_edit
         }
     }
 }
