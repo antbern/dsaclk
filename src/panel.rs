@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::display::Display;
 use crate::SharedState;
 

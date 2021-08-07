@@ -30,7 +30,7 @@ pub enum CursorMode {
 impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
     pub const fn new() -> Self {
         BufferedDisplay {
-            backing_buffer: [[b' ' as u8; COLUMNS]; ROWS],
+            backing_buffer: [[b' '; COLUMNS]; ROWS],
             visible_buffer: [[0u8; COLUMNS]; ROWS],
             current_row: 0,
             current_column: 0,
@@ -43,7 +43,7 @@ impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
         let mut set_pos = true;
         for row in 0..ROWS {
             for col in 0..COLUMNS {
-                if &self.backing_buffer[row][col] == &self.visible_buffer[row][col] {
+                if self.backing_buffer[row][col] == self.visible_buffer[row][col] {
                     set_pos = true;
                 } else {
                     if set_pos {
@@ -60,7 +60,7 @@ impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
 
         Ok(changed)
     }
-
+    #[allow(dead_code)]
     fn force_redraw(&mut self) {
         for row in 0..ROWS {
             for col in 0..COLUMNS {
@@ -76,7 +76,7 @@ impl<const ROWS: usize, const COLUMNS: usize> Display for BufferedDisplay<ROWS, 
     fn clear(&mut self) -> Result<(), Self::Error> {
         for row in 0..ROWS {
             for col in 0..COLUMNS {
-                self.backing_buffer[row][col] = ' ' as u8;
+                self.backing_buffer[row][col] = b' ';
             }
         }
 

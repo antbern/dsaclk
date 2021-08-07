@@ -178,6 +178,7 @@ fn main() -> ! {
     // experiment with tone generator
     let gpiob = peripherals.GPIOB.split();
 
+    #[allow(unused_variables)]
     let player = Player::new(peripherals.TIM4, gpiob.pb7.into_alternate_af2(), &clocks);
     // player.play(&mut delay);
 
@@ -299,7 +300,7 @@ fn main() -> ! {
         }
 
         // set the cursor mode if the screen was modified of the cursor state changed
-        let cursor_state = manager.get_cursor_state(&&panel_state);
+        let cursor_state = manager.get_cursor_state(&panel_state);
 
         if changed || cursor_state != last_cursor_state {
             match cursor_state {
