@@ -30,22 +30,43 @@ pub enum CursorMode {
 impl<const ROWS: usize, const COLUMNS: usize> BufferedDisplay<ROWS, COLUMNS> {
     pub const fn new() -> Self {
         BufferedDisplay {
-            backing_buffer: [[0u8; COLUMNS]; ROWS],
+            backing_buffer: [[b' ' as u8; COLUMNS]; ROWS],
             visible_buffer: [[0u8; COLUMNS]; ROWS],
             current_row: 0,
             current_column: 0,
         }
     }
-
-    pub fn apply<D: Display>(&self, target: &mut D) -> Result<(), D::Error> {
+    //
+    pub fn apply<D: Display>(&mut self, target: &mut D) -> Result<bool, D::Error> {
         // iterate over all rows and write them out
-        // TODO: make this smarter and work with the backing/visible buffer
-        for row in 0..ROWS as u8 {
-            target.set_cursor_position(row, 0)?;
-            target.write(&self.backing_buffer[row as usize])?;
+        let mut changed = false;
+        let mut set_pos = true;
+        for row in 0..ROWS {
+            for col in 0..COLUMNS {
+                if &self.backing_buffer[row][col] == &self.visible_buffer[row][col] {
+                    set_pos = true;
+                } else {
+                    if set_pos {
+                        target.set_cursor_position(row as u8, col as u8)?;
+                        set_pos = false;
+                    }
+
+                    target.write(&[self.backing_buffer[row][col]])?;
+                    self.visible_buffer[row][col] = self.backing_buffer[row][col];
+                    changed = true;
+                }
+            }
         }
 
-        Ok(())
+        Ok(changed)
+    }
+
+    fn force_redraw(&mut self) {
+        for row in 0..ROWS {
+            for col in 0..COLUMNS {
+                self.visible_buffer[row][col] = 0;
+            }
+        }
     }
 }
 
@@ -55,8 +76,7 @@ impl<const ROWS: usize, const COLUMNS: usize> Display for BufferedDisplay<ROWS, 
     fn clear(&mut self) -> Result<(), Self::Error> {
         for row in 0..ROWS {
             for col in 0..COLUMNS {
-                self.backing_buffer[row][col] = 0;
-                self.visible_buffer[row][col] = 0;
+                self.backing_buffer[row][col] = ' ' as u8;
             }
         }
 
