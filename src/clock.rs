@@ -1,4 +1,5 @@
-use stm32f4xx_hal::stm32 as stm32f401;
+use cortex_m::interrupt::free;
+use stm32f4xx_hal::{interrupt, stm32 as stm32f401};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ClockState {
@@ -25,6 +26,13 @@ impl Default for ClockState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AlarmState {
+    pub hour: u8,
+    pub minute: u8,
+    pub enabled: bool,
+}
+
 pub struct Clock {
     rtc: stm32f401::RTC,
 }
@@ -34,7 +42,8 @@ impl Clock {
         Clock { rtc: reg }
     }
 
-    fn initialization_mode<F>(&mut self, f: F)
+    // disables the write protection of the RTC registers for manipulation and then enables it again
+    fn protected<F>(&mut self, f: F)
     where
         F: FnOnce(&mut stm32f401::RTC),
     {
@@ -42,20 +51,29 @@ impl Clock {
         self.rtc.wpr.write(|w| w.key().bits(0xCA));
         self.rtc.wpr.write(|w| w.key().bits(0x53));
 
-        // Enter initialization mode
-        self.rtc.isr.modify(|_, w| w.init().init_mode());
-
-        // wait for confirmation
-        while self.rtc.isr.read().initf().is_not_allowed() {}
-
-        // we can now safely initialize the RTC
         f(&mut self.rtc);
-
-        // exit initialization mode
-        self.rtc.isr.modify(|_, w| w.init().free_running_mode());
 
         // enable RTC write protection
         self.rtc.wpr.write(|w| w.key().bits(0xFF));
+    }
+
+    fn initialization_mode<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut stm32f401::RTC),
+    {
+        self.protected(|rtc| {
+            // Enter initialization mode
+            rtc.isr.modify(|_, w| w.init().init_mode());
+
+            // wait for confirmation
+            while rtc.isr.read().initf().is_not_allowed() {}
+
+            // we can now safely initialize the RTC
+            f(rtc);
+
+            // exit initialization mode
+            rtc.isr.modify(|_, w| w.init().free_running_mode());
+        });
     }
 
     /// Initialize the RTC clock
@@ -122,4 +140,72 @@ impl Clock {
             rtc.cr.modify(|_, w| w.fmt().twenty_four_hour());
         })
     }
+
+    pub fn get_alarm(&self) -> AlarmState {
+        let cr = self.rtc.cr.read();
+        let alrmar = self.rtc.alrmar.read();
+        AlarmState {
+            hour: alrmar.ht().bits() * 10 + alrmar.hu().bits(),
+            minute: alrmar.mnt().bits() * 10 + alrmar.mnu().bits(),
+            enabled: cr.alrae().is_enabled(),
+        }
+    }
+
+    pub fn set_alarm(&mut self, alarm: AlarmState) {
+        self.protected(|rtc| {
+            // disable alarm A
+            rtc.cr.modify(|_, w| w.alrae().disabled());
+
+            // wait for confirmation
+            while rtc.isr.read().alrawf().is_update_not_allowed() {}
+
+            // configure alarm A
+            rtc.alrmar.modify(|_, w| {
+                w.msk1()
+                    .mask() // care about seconds
+                    .msk2()
+                    .mask() // care about minutes
+                    .msk3()
+                    .mask() // care about hours
+                    .msk4()
+                    .not_mask() // do not care about date/week day
+                    .pm()
+                    .am() // AM/24 hour format
+                    .ht()
+                    .bits(alarm.hour / 10) // set hour
+                    .hu()
+                    .bits(alarm.hour % 10)
+                    .mnt()
+                    .bits(alarm.minute / 10) // set minute
+                    .mnu()
+                    .bits(alarm.minute % 10)
+                    .st()
+                    .bits(0) // set seconds to zero to match on new minute
+                    .su()
+                    .bits(0)
+            });
+
+            // re-enable alarm A (if enabled)
+            rtc.cr.modify(|_, w| {
+                w.alrae().variant(match alarm.enabled {
+                    false => stm32f401::rtc::cr::ALRAE_A::DISABLED,
+                    true => stm32f401::rtc::cr::ALRAE_A::ENABLED,
+                })
+            });
+        });
+    }
+
+    pub fn alarm_triggered(&self) -> bool {
+        self.rtc.isr.read().alraf().is_match_()
+    }
+
+    pub fn alarm_reset(&mut self) {
+        self.rtc.isr.modify(|_, w| w.alraf().clear())
+    }
+ 
 }
+
+
+
+
+   

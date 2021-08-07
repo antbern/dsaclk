@@ -36,11 +36,12 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
-// use core::fmt::Write;
-
-use crate::display::{Display, I2CDisplayDriver};
 use crate::panel::CursorState;
 use crate::panel::Panel;
+use crate::{
+    clock::AlarmState,
+    display::{Display, I2CDisplayDriver},
+};
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -226,6 +227,12 @@ fn main() -> ! {
 
     defmt::info!("Initializing!");
 
+    c.set_alarm(AlarmState {
+        hour: 0,
+        minute: 50,
+        enabled: true,
+    });
+
     // setup stuff for the menu system
     let manager: &mut dyn Panel<display::BufferedDisplay<4, 20>> =
         &mut panel::time::TimePanel::new();
@@ -263,6 +270,12 @@ fn main() -> ! {
                     }
 
                     last_edit_state = manager.is_editing();
+
+                    // check the alarm status
+                    if c.alarm_triggered() {
+                        defmt::info!("Alarm Triggered! {}", defmt::Debug2Format(&c.get_alarm()));
+                        c.alarm_reset();
+                    }
                 }
                 Encoder(change) => {
                     let mut c = change;
