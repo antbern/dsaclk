@@ -70,12 +70,34 @@ macro_rules! logf_cs {
         DEBUG_UART_TX.try_borrow_mut($cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap().unwrap()
     );
 }
-
-pub struct SharedState {
-    clock: Clock,
+#[derive(Debug)]
+pub struct ClockState {
     hour: u8,
     minute: u8,
     second: u8,
+    weekday: u8,
+    day: u8,
+    month: u8,
+    year: u8,
+}
+
+impl Default for ClockState {
+    fn default() -> Self {
+        ClockState {
+            hour: 0,
+            minute: 0,
+            second: 0,
+            weekday: 1,
+            day: 1,
+            month: 1,
+            year: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SharedState {
+    clock: ClockState,
 }
 
 #[interrupt]
@@ -157,7 +179,7 @@ fn main() -> ! {
     let gpiob = peripherals.GPIOB.split();
 
     let player = Player::new(peripherals.TIM4, gpiob.pb7.into_alternate_af2(), &clocks);
-    player.play(&mut delay);
+    // player.play(&mut delay);
 
     // setup Timer 3 as an encoder and put it in the mutex as a global variable
     ENCODER.put(Encoder::new(
@@ -222,10 +244,7 @@ fn main() -> ! {
 
     // setup the shared state
     let mut panel_state = SharedState {
-        clock: c,
-        hour: 0,
-        minute: 0,
-        second: 0,
+        clock: Default::default(),
     };
 
     let mut last_cursor_state = CursorState::Off;
@@ -233,7 +252,7 @@ fn main() -> ! {
     'outer: loop {
         // wait for any interrupts to happen ("sleep")
         // NOTE: makes the debugger having a hard time connecting sometimes
-        cortex_m::asm::wfi();
+        // cortex_m::asm::wfi();
 
         // free(|cs| logf_cs!(cs, "Queue size: {:?}\n", EVENT_QUEUE.count(cs)));
 
@@ -274,6 +293,10 @@ fn main() -> ! {
 
         // update the display after processing all events
         let changed = disp.apply(&mut display).unwrap();
+
+        if changed {
+            defmt::debug!("Shared state = {}", defmt::Debug2Format(&panel_state));
+        }
 
         // set the cursor mode if the screen was modified of the cursor state changed
         let cursor_state = manager.get_cursor_state(&&panel_state);
