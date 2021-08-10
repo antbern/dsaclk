@@ -1,6 +1,9 @@
 use cortex_m::interrupt::free;
 use stm32f4xx_hal::{interrupt, stm32 as stm32f401};
 
+use crate::event::InterruptEvent;
+use crate::EVENT_QUEUE;
+
 #[derive(Debug, Clone, Copy)]
 pub struct ClockState {
     pub hour: u8,
@@ -202,10 +205,33 @@ impl Clock {
     pub fn alarm_reset(&mut self) {
         self.rtc.isr.modify(|_, w| w.alraf().clear())
     }
- 
+
+    pub fn enable_alarm_interrupt(&mut self, exti: &stm32f401::EXTI) {
+        // According to page 449 of the STM32F401xDE reference manual
+
+        // enable EXTI Line 17 in interrupt mode and select rising edge sensitivity
+        exti.imr.modify(|_, w| w.mr17().unmasked());
+        exti.rtsr.modify(|_, w| w.tr17().enabled());
+
+        // enable RTC alarm A interrupt
+        self.protected(|rtc| rtc.cr.modify(|_, w| w.alraie().enabled()));
+
+        // enable RTC Alarm interrupt in the NVIC
+        stm32f401::NVIC::unpend(stm32f4xx_hal::interrupt::RTC_ALARM);
+        unsafe {
+            stm32f401::NVIC::unmask(stm32f4xx_hal::interrupt::RTC_ALARM);
+        };
+    }
 }
 
+#[interrupt]
+fn RTC_ALARM() {
+    free(|cs| {
+        // SAFETY only used to reset the interrupt pending bit atomically with no side effects
+        unsafe {
+            (*stm32f401::EXTI::ptr()).pr.write(|w| w.pr17().set_bit());
+        }
 
-
-
-   
+        EVENT_QUEUE.put(cs, InterruptEvent::Alarm);
+    });
+}

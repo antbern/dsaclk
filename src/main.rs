@@ -195,6 +195,7 @@ fn main() -> ! {
 
         c.init();
     }
+    c.enable_alarm_interrupt(&peripherals.EXTI);
 
     // setup I2C
     let i2c = I2c::new(
@@ -270,12 +271,6 @@ fn main() -> ! {
                     }
 
                     last_edit_state = manager.is_editing();
-
-                    // check the alarm status
-                    if c.alarm_triggered() {
-                        defmt::info!("Alarm Triggered! {}", defmt::Debug2Format(&c.get_alarm()));
-                        c.alarm_reset();
-                    }
                 }
                 Encoder(change) => {
                     let mut c = change;
@@ -298,6 +293,10 @@ fn main() -> ! {
                 }
                 LongPress => manager.leave(&mut panel_state),
                 ShortPress => manager.enter(&mut panel_state),
+                Alarm => {
+                    defmt::info!("Alarm Interrupt! {}", defmt::Debug2Format(&c.get_alarm()));
+                    c.alarm_reset();
+                }
             }
         }
 
@@ -308,9 +307,9 @@ fn main() -> ! {
         // update the display after processing all events
         let changed = disp.apply(&mut display).unwrap();
 
-        if changed {
-            defmt::debug!("Shared state = {}", defmt::Debug2Format(&panel_state));
-        }
+        //if changed {
+        //    defmt::debug!("Shared state = {}", defmt::Debug2Format(&panel_state));
+        //}
 
         // set the cursor mode if the screen was modified of the cursor state changed
         let cursor_state = manager.get_cursor_state(&panel_state);

@@ -8,6 +8,7 @@ pub enum InterruptEvent {
     Encoder(i8),
     ShortPress,
     LongPress,
+    Alarm,
 }
 /// Inner implementation for EventQueue protected by a Mutex for inner mutability
 #[derive(Debug)]
