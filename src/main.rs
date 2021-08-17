@@ -75,6 +75,7 @@ macro_rules! logf_cs {
 #[derive(Debug)]
 pub struct SharedState {
     clock: ClockState,
+    alarm: AlarmState,
 }
 
 #[interrupt]
@@ -228,12 +229,6 @@ fn main() -> ! {
 
     defmt::info!("Initializing!");
 
-    c.set_alarm(AlarmState {
-        hour: 0,
-        minute: 50,
-        enabled: true,
-    });
-
     // setup stuff for the menu system
     let manager: &mut dyn Panel<display::BufferedDisplay<4, 20>> =
         &mut panel::time::TimePanel::new();
@@ -241,6 +236,7 @@ fn main() -> ! {
     // setup the shared state
     let mut panel_state = SharedState {
         clock: c.get_state(),
+        alarm: c.get_alarm(),
     };
 
     let mut last_cursor_state = CursorState::Off;
@@ -264,10 +260,12 @@ fn main() -> ! {
                     // fetch the current date and time from the clock if the panel is not editing
                     if last_edit_state && !manager.is_editing() {
                         c.set_state(panel_state.clock);
+                        c.set_alarm(panel_state.alarm);
                     }
 
                     if !manager.is_editing() {
                         panel_state.clock = c.get_state();
+                        panel_state.alarm = c.get_alarm();
                     }
 
                     last_edit_state = manager.is_editing();

@@ -39,7 +39,7 @@ pub struct AlarmState {
 pub struct Clock {
     rtc: stm32f401::RTC,
 }
-
+#[allow(dead_code)]
 impl Clock {
     pub fn new(reg: stm32f401::RTC) -> Clock {
         Clock { rtc: reg }
