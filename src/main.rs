@@ -10,7 +10,7 @@ mod panel;
 mod player;
 mod util;
 
-use clock::Clock;
+use clock::{Clock, ClockState};
 use defmt::{debug, error, info};
 use encoder::Encoder;
 use event::{EventQueue, InterruptEvent};
@@ -36,11 +36,12 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
-// use core::fmt::Write;
-
-use crate::display::{Display, I2CDisplayDriver};
 use crate::panel::CursorState;
 use crate::panel::Panel;
+use crate::{
+    clock::AlarmState,
+    display::{Display, I2CDisplayDriver},
+};
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -70,34 +71,11 @@ macro_rules! logf_cs {
         DEBUG_UART_TX.try_borrow_mut($cs, |uart|Some(uart.write_fmt(format_args!($($arg)*)))).unwrap().unwrap()
     );
 }
-#[derive(Debug)]
-pub struct ClockState {
-    hour: u8,
-    minute: u8,
-    second: u8,
-    weekday: u8,
-    day: u8,
-    month: u8,
-    year: u8,
-}
-
-impl Default for ClockState {
-    fn default() -> Self {
-        ClockState {
-            hour: 0,
-            minute: 0,
-            second: 0,
-            weekday: 1,
-            day: 1,
-            month: 1,
-            year: 0,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct SharedState {
     clock: ClockState,
+    alarm: AlarmState,
 }
 
 #[interrupt]
@@ -139,6 +117,17 @@ fn main() -> ! {
     let peripherals = stm32f4xx_hal::stm32::Peripherals::take().unwrap();
     let peripherals_m = cortex_m::Peripherals::take().unwrap();
 
+    // TEMP: Setup RTC clock
+    peripherals.RCC.apb1enr.modify(|_, w| w.pwren().enabled());
+    peripherals.PWR.cr.modify(|_, w| w.dbp().set_bit());
+    peripherals
+        .RCC
+        .bdcr
+        .modify(|_, w| w.lseon().on().rtcsel().lse());
+
+    while peripherals.RCC.bdcr.read().lserdy().is_not_ready() {}
+    peripherals.RCC.bdcr.modify(|_, w| w.rtcen().enabled());
+
     let rcc = peripherals.RCC.constrain();
 
     let clocks = rcc
@@ -178,6 +167,7 @@ fn main() -> ! {
     // experiment with tone generator
     let gpiob = peripherals.GPIOB.split();
 
+    #[allow(unused_variables)]
     let player = Player::new(peripherals.TIM4, gpiob.pb7.into_alternate_af2(), &clocks);
     // player.play(&mut delay);
 
@@ -199,13 +189,14 @@ fn main() -> ! {
     };
 
     // experiment with RTC
-    let c = Clock::new(peripherals.RTC);
+    let mut c = Clock::new(peripherals.RTC);
 
     if !c.is_set() {
         info!("RTC is not initialized! Setting up...");
 
         c.init();
     }
+    c.enable_alarm_interrupt(&peripherals.EXTI);
 
     // setup I2C
     let i2c = I2c::new(
@@ -244,10 +235,13 @@ fn main() -> ! {
 
     // setup the shared state
     let mut panel_state = SharedState {
-        clock: Default::default(),
+        clock: c.get_state(),
+        alarm: c.get_alarm(),
     };
 
     let mut last_cursor_state = CursorState::Off;
+
+    let mut last_edit_state = false;
 
     'outer: loop {
         // wait for any interrupts to happen ("sleep")
@@ -262,6 +256,19 @@ fn main() -> ! {
             match evt {
                 Tick => {
                     led.toggle().unwrap();
+
+                    // fetch the current date and time from the clock if the panel is not editing
+                    if last_edit_state && !manager.is_editing() {
+                        c.set_state(panel_state.clock);
+                        c.set_alarm(panel_state.alarm);
+                    }
+
+                    if !manager.is_editing() {
+                        panel_state.clock = c.get_state();
+                        panel_state.alarm = c.get_alarm();
+                    }
+
+                    last_edit_state = manager.is_editing();
                 }
                 Encoder(change) => {
                     let mut c = change;
@@ -284,6 +291,10 @@ fn main() -> ! {
                 }
                 LongPress => manager.leave(&mut panel_state),
                 ShortPress => manager.enter(&mut panel_state),
+                Alarm => {
+                    defmt::info!("Alarm Interrupt! {}", defmt::Debug2Format(&c.get_alarm()));
+                    c.alarm_reset();
+                }
             }
         }
 
@@ -294,12 +305,12 @@ fn main() -> ! {
         // update the display after processing all events
         let changed = disp.apply(&mut display).unwrap();
 
-        if changed {
-            defmt::debug!("Shared state = {}", defmt::Debug2Format(&panel_state));
-        }
+        //if changed {
+        //    defmt::debug!("Shared state = {}", defmt::Debug2Format(&panel_state));
+        //}
 
         // set the cursor mode if the screen was modified of the cursor state changed
-        let cursor_state = manager.get_cursor_state(&&panel_state);
+        let cursor_state = manager.get_cursor_state(&panel_state);
 
         if changed || cursor_state != last_cursor_state {
             match cursor_state {

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::display::Display;
 use crate::SharedState;
 
@@ -27,10 +28,11 @@ pub trait Panel<D: Display> {
     fn leave(&mut self, state: &mut SharedState);
     fn display(&self, disp: &mut D, state: &mut SharedState) -> Result<(), D::Error>;
     fn get_cursor_state(&self, state: &SharedState) -> CursorState;
+    fn is_editing(&self) -> bool;
 }
 
 pub mod time {
-    use super::{DecF, MonthF, WeekdayF};
+    use super::{DecF, MonthF, OnOffF, WeekdayF};
     use crate::display::Display;
     use crate::SharedState;
 
@@ -44,6 +46,9 @@ pub mod time {
         Day,
         Month,
         Year,
+        AlarmHour,
+        AlarmMinute,
+        AlarmEnabled,
     }
 
     pub struct TimePanel {
@@ -79,6 +84,9 @@ pub mod time {
                     SelectedField::Day => DecF::next(&mut state.clock.day, 1, 31),
                     SelectedField::Month => MonthF::next(&mut state.clock.month),
                     SelectedField::Year => DecF::next(&mut state.clock.year, 0, 40),
+                    SelectedField::AlarmHour => DecF::next(&mut state.alarm.hour, 0, 23),
+                    SelectedField::AlarmMinute => DecF::next(&mut state.alarm.minute, 0, 59),
+                    SelectedField::AlarmEnabled => OnOffF::next(&mut state.alarm.enabled),
                 }
             } else {
                 self.selected = match self.selected {
@@ -88,7 +96,10 @@ pub mod time {
                     SelectedField::Weekday => SelectedField::Day,
                     SelectedField::Day => SelectedField::Month,
                     SelectedField::Month => SelectedField::Year,
-                    SelectedField::Year => SelectedField::Hour,
+                    SelectedField::Year => SelectedField::AlarmHour,
+                    SelectedField::AlarmHour => SelectedField::AlarmMinute,
+                    SelectedField::AlarmMinute => SelectedField::AlarmEnabled,
+                    SelectedField::AlarmEnabled => SelectedField::Hour,
                 }
             }
         }
@@ -103,16 +114,22 @@ pub mod time {
                     SelectedField::Day => DecF::previous(&mut state.clock.day, 1, 31),
                     SelectedField::Month => MonthF::previous(&mut state.clock.month),
                     SelectedField::Year => DecF::previous(&mut state.clock.year, 0, 40),
+                    SelectedField::AlarmHour => DecF::previous(&mut state.alarm.hour, 0, 23),
+                    SelectedField::AlarmMinute => DecF::previous(&mut state.alarm.minute, 0, 59),
+                    SelectedField::AlarmEnabled => OnOffF::previous(&mut state.alarm.enabled),
                 }
             } else {
                 self.selected = match self.selected {
-                    SelectedField::Hour => SelectedField::Year,
+                    SelectedField::Hour => SelectedField::AlarmEnabled,
                     SelectedField::Minute => SelectedField::Hour,
                     SelectedField::Second => SelectedField::Minute,
                     SelectedField::Weekday => SelectedField::Second,
                     SelectedField::Day => SelectedField::Weekday,
                     SelectedField::Month => SelectedField::Day,
                     SelectedField::Year => SelectedField::Month,
+                    SelectedField::AlarmHour => SelectedField::Year,
+                    SelectedField::AlarmMinute => SelectedField::AlarmHour,
+                    SelectedField::AlarmEnabled => SelectedField::AlarmMinute,
                 }
             }
         }
@@ -121,25 +138,39 @@ pub mod time {
             disp.set_cursor_position(0, 0)?;
             disp.write(b"Time")?;
 
-            disp.set_cursor_position(2, 3)?;
+            disp.set_cursor_position(0, 7)?;
             disp.write(DecF::get_str(state.clock.hour, 0, 23).as_bytes())?;
             disp.write(b":")?;
             disp.write(DecF::get_str(state.clock.minute, 0, 59).as_bytes())?;
             disp.write(b":")?;
             disp.write(DecF::get_str(state.clock.second, 0, 59).as_bytes())?;
 
-            disp.set_cursor_position(3, 2)?;
+            disp.set_cursor_position(1, 0)?;
+            disp.write(b"Date")?;
+
+            disp.set_cursor_position(1, 5)?;
             disp.write(WeekdayF::get_str(state.clock.weekday).as_bytes())?;
 
-            disp.set_cursor_position(3, 6)?;
+            disp.set_cursor_position(1, 9)?;
             disp.write(DecF::get_str(state.clock.day, 1, 31).as_bytes())?;
 
-            disp.set_cursor_position(3, 9)?;
+            disp.set_cursor_position(1, 12)?;
             disp.write(MonthF::get_str(state.clock.month).as_bytes())?;
 
-            disp.set_cursor_position(3, 13)?;
+            disp.set_cursor_position(1, 16)?;
             disp.write(b"20")?;
             disp.write(DecF::get_str(state.clock.year, 0, 40).as_bytes())?;
+
+            disp.set_cursor_position(2, 0)?;
+            disp.write(b"Alarm")?;
+
+            disp.set_cursor_position(2, 7)?;
+            disp.write(DecF::get_str(state.alarm.hour, 0, 23).as_bytes())?;
+            disp.write(b":")?;
+            disp.write(DecF::get_str(state.alarm.minute, 0, 59).as_bytes())?;
+
+            disp.set_cursor_position(2, 13)?;
+            disp.write(OnOffF::get_str(state.alarm.enabled).as_bytes())?;
 
             Ok(())
         }
@@ -147,25 +178,33 @@ pub mod time {
         fn get_cursor_state(&self, _state: &SharedState) -> CursorState {
             use SelectedField::*;
 
-            let row = 2 + match self.selected {
+            let row = match self.selected {
                 Hour | Minute | Second => 0,
                 Weekday | Day | Month | Year => 1,
+                AlarmHour | AlarmMinute | AlarmEnabled => 2,
             };
 
-            let col = 1 + match self.selected {
-                Hour => 3,
-                Minute => 6,
-                Second => 9,
-                Weekday => 3,
-                Day => 6,
-                Month => 10,
-                Year => 15,
+            let col = match self.selected {
+                Hour => 8,
+                Minute => 11,
+                Second => 14,
+                Weekday => 7,
+                Day => 10,
+                Month => 14,
+                Year => 19,
+                AlarmHour => 8,
+                AlarmMinute => 11,
+                AlarmEnabled => 15,
             };
 
             match self.in_edit {
                 true => CursorState::Blinking(row, col),
                 false => CursorState::Underline(row, col),
             }
+        }
+
+        fn is_editing(&self) -> bool {
+            self.in_edit
         }
     }
 }
@@ -184,7 +223,7 @@ impl OnOffF {
 
     fn get_str(state: bool) -> &'static str {
         match state {
-            true => "ON",
+            true => " ON",
             false => "OFF",
         }
     }
