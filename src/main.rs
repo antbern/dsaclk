@@ -3,6 +3,7 @@
 
 mod clock;
 mod defmt_uart;
+mod dialog;
 mod display;
 mod encoder;
 mod event;
@@ -36,12 +37,12 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
-use crate::panel::CursorState;
 use crate::panel::Panel;
 use crate::{
     clock::AlarmState,
     display::{Display, I2CDisplayDriver},
 };
+use crate::{dialog::Dialog, panel::CursorState};
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -243,6 +244,8 @@ fn main() -> ! {
 
     let mut last_edit_state = false;
 
+    let mut dialog: Option<dialog::Dialog> = None;
+
     'outer: loop {
         // wait for any interrupts to happen ("sleep")
         // NOTE: makes the debugger having a hard time connecting sometimes
@@ -253,65 +256,85 @@ fn main() -> ! {
         // handle all pending events
         while let Some(evt) = free(|cs| EVENT_QUEUE.take(cs)) {
             use InterruptEvent::*;
-            match evt {
-                Tick => {
-                    led.toggle().unwrap();
 
-                    // fetch the current date and time from the clock if the panel is not editing
-                    if last_edit_state && !manager.is_editing() {
-                        c.set_state(panel_state.clock);
-                        c.set_alarm(panel_state.alarm);
+            if let Some(d) = dialog {
+                match evt {
+                    LongPress | ShortPress => {
+                        dialog = None;
+                        // post the event that is supposed to happen after the dialog
+                        if let Some(e) = d.event {
+                            free(|cs| EVENT_QUEUE.put(cs, e));
+                        }
                     }
-
-                    if !manager.is_editing() {
-                        panel_state.clock = c.get_state();
-                        panel_state.alarm = c.get_alarm();
-                    }
-
-                    last_edit_state = manager.is_editing();
+                    _ => (),
                 }
-                Encoder(change) => {
-                    let mut c = change;
-                    while c > 0 {
-                        manager.next(&mut panel_state);
-                        c -= 1;
-                    }
+            } else {
+                match evt {
+                    Tick => {
+                        led.toggle().unwrap();
 
-                    while c < 0 {
-                        manager.previous(&mut panel_state);
-                        c += 1;
-                    }
+                        // fetch the current date and time from the clock if the panel is not editing
+                        if last_edit_state && !manager.is_editing() {
+                            c.set_state(panel_state.clock);
+                            c.set_alarm(panel_state.alarm);
+                        }
 
-                    // logf!("Encoder: {:?}\n", change);
-                    defmt::info!("Encoder: {=i8}", change);
-                    if change == 10 {
-                        // for development
-                        break 'outer;
+                        if !manager.is_editing() {
+                            panel_state.clock = c.get_state();
+                            panel_state.alarm = c.get_alarm();
+                        }
+
+                        last_edit_state = manager.is_editing();
                     }
-                }
-                LongPress => manager.leave(&mut panel_state),
-                ShortPress => manager.enter(&mut panel_state),
-                Alarm => {
-                    defmt::info!("Alarm Interrupt! {}", defmt::Debug2Format(&c.get_alarm()));
-                    c.alarm_reset();
+                    Encoder(change) => {
+                        let mut c = change;
+                        while c > 0 {
+                            manager.next(&mut panel_state);
+                            c -= 1;
+                        }
+
+                        while c < 0 {
+                            manager.previous(&mut panel_state);
+                            c += 1;
+                        }
+
+                        // logf!("Encoder: {:?}\n", change);
+                        defmt::info!("Encoder: {=i8}", change);
+                        if change == 10 {
+                            // for development
+                            break 'outer;
+                        }
+                    }
+                    LongPress => manager.leave(&mut panel_state),
+                    ShortPress => manager.enter(&mut panel_state),
+                    Alarm => {
+                        defmt::info!("Alarm Interrupt! {}", defmt::Debug2Format(&c.get_alarm()));
+
+                        // free(|cs| {
+                        //     let diag = crate::Dialog::new("Alarm triggered", None);
+                        //     EVENT_QUEUE.put(cs, InterruptEvent::Dialog(diag));
+                        // });
+                        c.alarm_reset();
+                        dialog = Some(crate::Dialog::new("Alarm triggered", None));
+                    } // Dialog(d) => dialog = Some(d),
                 }
             }
         }
 
         disp.clear().unwrap();
 
-        manager.display(&mut disp, &mut panel_state).unwrap();
+        let cursor_state = if let Some(d) = dialog {
+            d.display(&mut disp).unwrap();
+            CursorState::Off
+        } else {
+            manager.display(&mut disp, &mut panel_state).unwrap();
+            manager.get_cursor_state(&panel_state)
+        };
 
         // update the display after processing all events
         let changed = disp.apply(&mut display).unwrap();
 
-        //if changed {
-        //    defmt::debug!("Shared state = {}", defmt::Debug2Format(&panel_state));
-        //}
-
         // set the cursor mode if the screen was modified of the cursor state changed
-        let cursor_state = manager.get_cursor_state(&panel_state);
-
         if changed || cursor_state != last_cursor_state {
             match cursor_state {
                 panel::CursorState::Off => {
@@ -335,7 +358,6 @@ fn main() -> ! {
     }
 
     // setup sdio interface for sc card
-    let gpioc = peripherals.GPIOC.split();
     let gpiod = peripherals.GPIOD.split();
 
     let d0 = gpioc.pc8.into_alternate_af12().internal_pull_up(true);
