@@ -7,6 +7,7 @@ mod dialog;
 mod display;
 mod encoder;
 mod event;
+mod mpu;
 mod panel;
 mod player;
 mod sdcard;
@@ -41,6 +42,7 @@ use util::GlobalCell;
 use crate::{
     clock::AlarmState,
     display::{Display, I2CDisplayDriver},
+    mpu::MPU,
     sdcard::Settings,
 };
 use crate::{dialog::Dialog, panel::CursorState};
@@ -218,7 +220,21 @@ fn main() -> ! {
     }
     c.enable_alarm_interrupt(&peripherals.EXTI);
 
-    // setup I2C
+    // setup and try MPU6050 I2C3
+
+    let i2c3 = I2c::new(
+        peripherals.I2C3,
+        (
+            gpioa.pa8.into_alternate_af4().set_open_drain(),
+            gpioc.pc9.into_alternate_af4().set_open_drain(),
+        ),
+        400.khz(),
+        clocks,
+    );
+
+    let mut mpu = MPU::new(i2c3, &mut delay, 10).unwrap();
+
+    // setup display I2C
     let i2c = I2c::new(
         peripherals.I2C1,
         (
@@ -265,7 +281,7 @@ fn main() -> ! {
 
     let mut dialog: Option<dialog::Dialog> = None;
 
-    'outer: loop {
+    loop {
         // wait for any interrupts to happen ("sleep")
         // NOTE: makes the debugger having a hard time connecting sometimes
         // cortex_m::asm::wfi();
@@ -304,6 +320,10 @@ fn main() -> ! {
                         }
 
                         last_edit_state = manager.is_editing();
+
+                        if let Some(m) = mpu.tick() {
+                            defmt::debug!("measurement: {:?}", defmt::Debug2Format(&m));
+                        }
                     }
                     Encoder(change) => {
                         let mut c = change;
@@ -319,10 +339,6 @@ fn main() -> ! {
 
                         // logf!("Encoder: {:?}\n", change);
                         defmt::info!("Encoder: {=i8}", change);
-                        if change == 10 {
-                            // for development
-                            break 'outer;
-                        }
                     }
                     LongPress => manager.leave(&mut panel_state),
                     ShortPress => manager.enter(&mut panel_state),
@@ -375,73 +391,4 @@ fn main() -> ! {
         }
         last_cursor_state = cursor_state;
     }
-
-    led.set_low().unwrap();
-    loop {}
-    /*
-    loop {
-        match sdio.init_card(stm32f4xx_hal::sdio::ClockFreq::F12Mhz) {
-            Ok(_) => break,
-            Err(e) => {
-                defmt::error!("Error initializing SD-card: {}", defmt::Debug2Format(&e));
-            }
-        }
-
-        led.set_high().unwrap();
-        delay.delay_ms(100);
-        led.set_low().unwrap();
-        delay.delay_ms(100);
-    }
-
-    // if everything went fine, get a reference to the card and print some debug data
-    if let Ok(card) = sdio.card() {
-        info!(
-            "Card successfully initialized! Info: {}",
-            defmt::Debug2Format(&card.cid)
-        );
-
-        // read block of data and print it
-
-        let nblocks = card.block_count();
-        info!("Card detected: nbr of blocks: {=u32}", nblocks);
-
-        let mut block = [0u8; 512];
-        match sdio.read_block(1, &mut block) {
-            Ok(_) => (),
-            Err(err) => {
-                error!("Failed to read block: {}", defmt::Debug2Format(&err));
-            }
-        }
-
-        for i in (0..512).step_by(16) {
-            debug!("{=[u8]:X} ", block[i..i + 16]);
-
-            // if (i + 1) % 16 == 0 {
-            //     logf!("\n");
-            // }
-        }
-
-        // logf!("\n");
-
-        // try to write something to the second block
-        for (i, b) in block.iter_mut().enumerate() {
-            *b = (i % 255) as u8;
-        }
-
-        // if let Err(e) = sdio.write_block(1, &block) {
-        //     logf!("Failed to write block: {:?}\n", e);
-        //     loop{}
-        // }
-    } else {
-        error!("Card could not be initialized!");
-    }
-
-    loop {
-        led.set_high().unwrap();
-        delay.delay_ms(1000);
-
-        led.set_low().unwrap();
-        delay.delay_ms(1000);
-    }
-    */
 }

@@ -1,12 +1,11 @@
-use cortex_m::delay::Delay;
 use embedded_hal::blocking::delay::DelayMs;
-use stm32f4xx_hal::sdio::{self, Card, Sdio};
+use stm32f4xx_hal::sdio::{self, Sdio};
 
 use postcard::{from_bytes, to_slice};
 use serde::{Deserialize, Serialize};
 
 const SDIO_BLOCK_SETTINGS: u32 = 1;
-const SDIO_RETRY_INTERVAL: u8 = 100;
+const SDIO_RETRY_INTERVAL_MS: u8 = 100;
 
 #[derive(Debug)]
 pub enum Error {
@@ -24,7 +23,7 @@ impl SdCard {
         delay: &mut D,
         timeout: u32,
     ) -> Result<SdCard, Error> {
-        let tries = timeout / SDIO_RETRY_INTERVAL as u32;
+        let tries = timeout / SDIO_RETRY_INTERVAL_MS as u32;
 
         for _ in 0..tries {
             match sdio.init_card(sdio::ClockFreq::F12Mhz) {
@@ -34,7 +33,7 @@ impl SdCard {
                     x => return Err(Error::SdioError(x)),
                 },
             }
-            delay.delay_ms(SDIO_RETRY_INTERVAL);
+            delay.delay_ms(SDIO_RETRY_INTERVAL_MS);
         }
 
         Err(Error::InitTimeout)
