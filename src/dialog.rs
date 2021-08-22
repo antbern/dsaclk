@@ -16,7 +16,7 @@ impl Dialog {
     pub fn display<D: Display>(&self, disp: &mut D) -> Result<(), D::Error> {
         let offset = match self.text.len() {
             x if x < 20 => (20 - x) / 2,
-            x => 0,
+            _ => 0,
         } as u8;
 
         disp.set_cursor_position(1, offset)?;

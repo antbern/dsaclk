@@ -9,6 +9,7 @@ mod encoder;
 mod event;
 mod panel;
 mod player;
+mod sdcard;
 mod util;
 
 use clock::{Clock, ClockState};
@@ -37,12 +38,13 @@ use stm32f4xx_hal::{
 };
 use util::GlobalCell;
 
-use crate::panel::Panel;
 use crate::{
     clock::AlarmState,
     display::{Display, I2CDisplayDriver},
+    sdcard::Settings,
 };
 use crate::{dialog::Dialog, panel::CursorState};
+use crate::{panel::Panel, sdcard::SdCard};
 
 const POLL_FREQ: u32 = 10;
 const LONG_PRESS_DURATION: u32 = 2;
@@ -143,9 +145,13 @@ fn main() -> ! {
 
     assert!(clocks.is_pll48clk_valid());
 
-    // setup UART communication through the ST-LINK/V2-1 debugger
+    // split all GPIO pins needed
     let gpioa = peripherals.GPIOA.split();
+    let gpiob = peripherals.GPIOB.split();
+    let gpioc = peripherals.GPIOC.split();
+    let gpiod = peripherals.GPIOD.split();
 
+    // setup UART communication through the ST-LINK/V2-1 debugger
     let serial = Serial::new(
         peripherals.USART2,
         (
@@ -166,7 +172,6 @@ fn main() -> ! {
     led.set_high().unwrap();
 
     // experiment with tone generator
-    let gpiob = peripherals.GPIOB.split();
 
     #[allow(unused_variables)]
     let player = Player::new(peripherals.TIM4, gpiob.pb7.into_alternate_af2(), &clocks);
@@ -188,6 +193,20 @@ fn main() -> ! {
     unsafe {
         stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
     };
+
+    // setup sdio interface for SD card
+    let d0 = gpioc.pc8.into_alternate_af12().internal_pull_up(true);
+    let clk = gpioc.pc12.into_alternate_af12().internal_pull_up(false);
+    let cmd = gpiod.pd2.into_alternate_af12().internal_pull_up(true);
+    let sdio = stm32f4xx_hal::sdio::Sdio::new(peripherals.SDIO, (clk, cmd, d0), clocks);
+
+    let mut card = SdCard::init(sdio, &mut delay, 2000).unwrap();
+
+    card.store_settings(Settings { id: 0x55 }).unwrap();
+    defmt::debug!(
+        "Loaded settings: {}",
+        defmt::Debug2Format(&card.load_settings())
+    );
 
     // experiment with RTC
     let mut c = Clock::new(peripherals.RTC);
@@ -357,16 +376,9 @@ fn main() -> ! {
         last_cursor_state = cursor_state;
     }
 
-    // setup sdio interface for sc card
-    let gpiod = peripherals.GPIOD.split();
-
-    let d0 = gpioc.pc8.into_alternate_af12().internal_pull_up(true);
-    let clk = gpioc.pc12.into_alternate_af12().internal_pull_up(false);
-    let cmd = gpiod.pd2.into_alternate_af12().internal_pull_up(true);
-    let mut sdio = stm32f4xx_hal::sdio::Sdio::new(peripherals.SDIO, (clk, cmd, d0), clocks);
-
     led.set_low().unwrap();
-
+    loop {}
+    /*
     loop {
         match sdio.init_card(stm32f4xx_hal::sdio::ClockFreq::F12Mhz) {
             Ok(_) => break,
@@ -390,7 +402,7 @@ fn main() -> ! {
 
         // read block of data and print it
 
-        let nblocks = sdio.card().map(|c| c.block_count()).unwrap_or(0);
+        let nblocks = card.block_count();
         info!("Card detected: nbr of blocks: {=u32}", nblocks);
 
         let mut block = [0u8; 512];
@@ -431,4 +443,5 @@ fn main() -> ! {
         led.set_low().unwrap();
         delay.delay_ms(1000);
     }
+    */
 }
