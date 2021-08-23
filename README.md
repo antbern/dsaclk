@@ -49,3 +49,4 @@ Useful links:
 * [knurling-rs/app-template](https://github.com/knurling-rs/app-template)
 * [defmt book](https://defmt-next.ferrous-systems.com/)
 * https://ferrous-systems.com/blog/defmt/
+* Original [mpu6050 library](https://github.com/juliangaal/mpu6050) by [juliangaal](https://github.com/juliangaal).
