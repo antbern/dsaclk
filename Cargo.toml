@@ -24,6 +24,7 @@ postcard = "0.7.2"
 serde = { version = "1.0.128", default-features = false, features = ["derive"] }
 heapless = "0.7.5"
 
+nalgebra = { version = "0.29.0", default-features = false}
 
 [dependencies.stm32f4xx-hal]
 version = "0.9"

@@ -12,6 +12,7 @@ mod panel;
 mod player;
 mod sdcard;
 mod util;
+mod vec;
 
 use clock::{Clock, ClockState};
 use defmt::{debug, error, info};
@@ -187,14 +188,10 @@ fn main() -> ! {
         gpiob.pb14.into_pull_down_input(),
     ));
 
+    // setup the timer used for polling (started later)
     let mut timer = Timer::tim5(peripherals.TIM5, POLL_FREQ.hz(), clocks);
     timer.listen(Event::TimeOut);
     TIMER_TIM5.put(timer);
-    // enable TIM5 interrupt in the NVIC
-    stm32::NVIC::unpend(stm32f4xx_hal::interrupt::TIM5);
-    unsafe {
-        stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
-    };
 
     // setup sdio interface for SD card
     let d0 = gpioc.pc8.into_alternate_af12().internal_pull_up(true);
@@ -265,6 +262,10 @@ fn main() -> ! {
 
     defmt::info!("Initializing!");
 
+    let calib = mpu.calibrate(&mut delay, 100, 1000 / 100 * 4);
+    defmt::debug!("Calibrated: {}", defmt::Debug2Format(&calib));
+    mpu.set_calibration(calib);
+
     // setup stuff for the menu system
     let manager: &mut dyn Panel<display::BufferedDisplay<4, 20>> =
         &mut panel::time::TimePanel::new();
@@ -276,10 +277,14 @@ fn main() -> ! {
     };
 
     let mut last_cursor_state = CursorState::Off;
-
     let mut last_edit_state = false;
-
     let mut dialog: Option<dialog::Dialog> = None;
+
+    // enable TIM5 interrupt in the NVIC before starting the loop
+    stm32::NVIC::unpend(stm32f4xx_hal::interrupt::TIM5);
+    unsafe {
+        stm32::NVIC::unmask(stm32f4xx_hal::interrupt::TIM5);
+    };
 
     loop {
         // wait for any interrupts to happen ("sleep")
