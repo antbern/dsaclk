@@ -46,7 +46,6 @@ use crate::{
     display::{Display, I2CDisplayDriver},
     logger::{LogContents, Logger},
     mpu::MPU,
-    sdcard::Settings,
 };
 use crate::{dialog::Dialog, panel::CursorState};
 use crate::{panel::Panel, sdcard::SdCard};
@@ -275,7 +274,7 @@ fn main() -> ! {
     let mut dialog: Option<dialog::Dialog> = None;
 
     // create logger with one minute timeout
-    let mut logger = Logger::<10>::new(POLL_FREQ * 60);
+    let mut logger = Logger::new();
 
     // enable TIM5 interrupt in the NVIC before starting the loop
     stm32::NVIC::unpend(stm32f4xx_hal::interrupt::TIM5);
@@ -325,15 +324,15 @@ fn main() -> ! {
 
                         if let Some(m) = mpu.tick() {
                             defmt::debug!("measurement: {:?}", defmt::Debug2Format(&m));
-                            logger.append(
-                                &c.get_state(),
-                                LogContents::Measurement(m),
-                                &mut card,
-                                &mut settings,
-                            );
+                            logger
+                                .append(
+                                    &c.get_state(),
+                                    LogContents::Measurement(m),
+                                    &mut card,
+                                    &mut settings,
+                                )
+                                .expect("Error appending to log");
                         }
-
-                        logger.tick(&mut card, &mut settings);
                     }
                     Encoder(change) => {
                         let mut c = change;

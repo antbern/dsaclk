@@ -1,25 +1,14 @@
 use core::convert::TryInto;
 
-use postcard::to_slice;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     clock::ClockState,
     mpu,
-    sdcard::{Settings, SD_BLOCK_SIZE},
+    sdcard::{self, Settings, SD_BLOCK_SIZE},
     SdCard,
 };
 
-/// the global static logger instance
-// pub static LOGGER: Mutex<RefCell<Logger<{ 512 * 10 }>>> =
-// Mutex::new(RefCell::new(Logger::new(100)));
-
-const BUFFER_SD_PAGES: usize = 3;
-
-static mut LOGGER_BUFFER: [u8; SD_BLOCK_SIZE * BUFFER_SD_PAGES] =
-    [0; SD_BLOCK_SIZE * BUFFER_SD_PAGES];
-
-// pub static LOGGer: GlobalCell<Logger<{ 512 * 10 }>> = GlobalCell::new(Some(Logger::new(100));
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LogEntry {
     timestamp: LogTimestamp,
@@ -56,126 +45,65 @@ impl From<&ClockState> for LogTimestamp {
     }
 }
 
-pub struct Logger<'a, const N: usize> {
-    timeout_ticks: u32,
-    timeout_counter: u32,
-    buffer: Option<&'a mut [u8]>,
-    // current_slice: &'static [u8],
+pub struct Logger {
+    buffer: [u8; SD_BLOCK_SIZE * 2],
+    current_idx: usize,
 }
 
-impl<'a, const N: usize> Logger<'a, N> {
-    pub fn new(timeout: u32) -> Logger<'a, N> {
-        Logger {
-            timeout_ticks: timeout,
-            timeout_counter: 0,
-            buffer: Some(unsafe { LOGGER_BUFFER.as_mut() }),
-            // current_slice: &[],
+impl Logger {
+    pub fn new() -> Self {
+        Self {
+            buffer: [0u8; SD_BLOCK_SIZE * 2],
+            current_idx: 0,
         }
     }
 
-    /// let the logger update (if it needs to)
-    pub fn tick(&mut self, sd_card: &mut SdCard, settings: &mut Settings) {
-        self.timeout_counter += 1;
-
-        if self.timeout_counter >= self.timeout_ticks {
-            self.timeout_counter = 0;
-            self.flush(sd_card, settings);
-        }
-    }
-
+    /// Appends an new LogEntry containing the LogContents to the SD-card log
     pub fn append(
         &mut self,
         clock: &ClockState,
         contents: LogContents,
         sd_card: &mut SdCard,
         settings: &mut Settings,
-    ) {
+    ) -> Result<(), sdcard::Error> {
         // construct a new logger entry with timestamp (TODO)
         let entry = LogEntry {
             timestamp: clock.into(),
             contents,
         };
 
-        // if serial buffer is full, flush the buffer to the SD card and try again
-        'outer: loop {
-            let buffer = self.buffer.take().unwrap();
+        // get a mutable slice of the remaining content in the buffer array
+        let buff = &mut self.buffer[self.current_idx..];
 
-            // serialize the new entry into the buffer, return the used portion
-            let used_len = match to_slice(&entry, buffer) {
-                Ok(x) => x.len(),
-                Err(e) if e == postcard::Error::SerializeBufferFull => {
-                    //  flush the buffer / write to SD card and reset (put the buffer back)
-                    self.buffer = Some(buffer);
-                    self.flush(sd_card, settings);
-                    break 'outer;
-                }
-                Err(_) => panic!(), // TODO
-            };
+        // serialize the LogEntry to the buffer, note that this assumes that the entire LogEntry fits into the remaining buffer space
+        let serialized =
+            postcard::to_slice(&entry, buff).map_err(|e| sdcard::Error::PostcardError(e))?;
 
-            // success
+        // increment next buffer index
+        self.current_idx += serialized.len();
 
-            // since to_slice only returns the used parts (even though the documentation states otherwise)
-            // we have to modify the internal buffer to point correctly
-            let (_, unused) = buffer.split_at_mut(used_len);
+        // if we have enough serialized to write to the SD-card, do it
+        if self.current_idx >= SD_BLOCK_SIZE {
+            // take out the data to write (note this should NEVER fail due to the explicit size being exact)
+            let data_to_write: &[u8; SD_BLOCK_SIZE] =
+                &self.buffer[..SD_BLOCK_SIZE].try_into().unwrap();
 
-            self.buffer = Some(unused);
+            sd_card.write_block(settings.logger_block, data_to_write)?;
 
-            // defmt::debug!("Used: {}", &used);
-            defmt::debug!(
-                "Self.buffer.len() = {}",
-                self.buffer.as_ref().and_then(|f| Some(f.len()))
-            );
-            break;
+            // store the settings with the new index
+            settings.logger_block += 1;
+            sd_card.store_settings(*settings).unwrap();
+
+            // adjust the index pointer
+            self.current_idx -= SD_BLOCK_SIZE;
+
+            // shift remaining data to the beginning of the buffer
+            for i in 0..self.current_idx {
+                self.buffer[i] = self.buffer[i + SD_BLOCK_SIZE];
+            }
+
+            defmt::debug!("Wrote block at address {}", &settings.logger_block - 1);
         }
-    }
-
-    fn flush(&mut self, sd_card: &mut SdCard, settings: &mut Settings) {
-        // fill the rest of the buffer with zeros
-        let buffer = self.buffer.take().unwrap();
-
-        // find out how many sd-card pages we need to write
-        let bytes_used = unsafe { LOGGER_BUFFER.len() } - buffer.len();
-
-        let sd_pages_used = if bytes_used % SD_BLOCK_SIZE > 0 {
-            bytes_used / SD_BLOCK_SIZE + 1
-        } else {
-            bytes_used / SD_BLOCK_SIZE
-        };
-
-        assert!(sd_pages_used <= BUFFER_SD_PAGES);
-
-        // reset the buffer slice to point at the entire allocated buffer
-        let buffer = unsafe { LOGGER_BUFFER.as_mut() };
-
-        // fill the rest with zeros
-        for i in bytes_used..(sd_pages_used * SD_BLOCK_SIZE) {
-            buffer[i] = 0;
-        }
-
-        // write the entire logger buffer to the sd card
-        let start_block: u32 = settings.logger_block; // TODO: load at startup and store after writing
-        for i in 0..sd_pages_used {
-            sd_card
-                .write_block(
-                    start_block + i as u32,
-                    &buffer[(i * SD_BLOCK_SIZE)..((i + 1) * SD_BLOCK_SIZE)]
-                        .try_into()
-                        .expect("slice incorrect length"),
-                )
-                .expect("Error writing log block");
-        }
-
-        settings.logger_block += sd_pages_used as u32;
-
-        sd_card.store_settings(*settings).unwrap();
-
-        defmt::debug!(
-            "Wrote {} blocks starting at block {}",
-            sd_pages_used,
-            start_block
-        );
-
-        // store the buffer for reusing
-        self.buffer = Some(buffer);
+        Ok(())
     }
 }
