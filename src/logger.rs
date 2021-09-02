@@ -82,18 +82,44 @@ impl Logger {
         // increment next buffer index
         self.current_idx += serialized.len();
 
-        // if we have enough serialized to write to the SD-card, do it
-        if self.current_idx >= SD_BLOCK_SIZE {
-            // take out the data to write (note this should NEVER fail due to the explicit size being exact)
-            let data_to_write: &[u8; SD_BLOCK_SIZE] =
-                &self.buffer[..SD_BLOCK_SIZE].try_into().unwrap();
+        // write the blocks while we have enough serialized data available
+        while self.current_idx >= SD_BLOCK_SIZE {
+            self.write_first_block(sd_card, settings)?;
+        }
+        Ok(())
+    }
 
-            sd_card.write_block(settings.logger_block, data_to_write)?;
+    /// Writes the first block in the buffer to the SD-card, shifts the buffer contents, and updates the `current_idx` pointer.
+    /// If the first block is not full (ie `current_idx < SD_BLOCK_SIZE`), the remaining bytes are zeroed before writing and the `current_idx` pointer is reset to zero.
+    // If `current_idx == 0`, the function does nothing.
+    fn write_first_block(
+        &mut self,
+        sd_card: &mut SdCard,
+        settings: &mut Settings,
+    ) -> Result<(), sdcard::Error> {
+        // do nothing if we have no buffered bytes
+        if self.current_idx == 0 {
+            return Ok(());
+        }
 
-            // store the settings with the new index
-            settings.logger_block += 1;
-            sd_card.store_settings(*settings).unwrap();
+        // less than a complete block left, fill the remaining with zeroes (just for keeping the blocks nice and tidy when reading later)
+        if self.current_idx < SD_BLOCK_SIZE {
+            self.buffer[self.current_idx..].fill(0);
+        }
 
+        // extract an array of one block and write it to the SD-card
+        let data_to_write: &[u8; SD_BLOCK_SIZE] = &self.buffer[..SD_BLOCK_SIZE].try_into().unwrap();
+        sd_card.write_block(settings.logger_block, data_to_write)?;
+
+        // update the logger_block index
+        settings.logger_block += 1;
+        sd_card.store_settings(*settings).unwrap();
+
+        if self.current_idx < SD_BLOCK_SIZE {
+            // fill the beginning of the buffer with zeroes as well (now the entire buffer should be zeroed)
+            self.buffer[0..self.current_idx].fill(0);
+            self.current_idx = 0;
+        } else {
             // adjust the index pointer
             self.current_idx -= SD_BLOCK_SIZE;
 
@@ -101,9 +127,30 @@ impl Logger {
             for i in 0..self.current_idx {
                 self.buffer[i] = self.buffer[i + SD_BLOCK_SIZE];
             }
-
-            defmt::debug!("Wrote block at address {}", &settings.logger_block - 1);
         }
+
+        defmt::debug!("Wrote block at address {}", &settings.logger_block - 1);
+
+        Ok(())
+    }
+
+    /// Forces the Logger to write the rest of the buffered serialized LogEntries to the SD-card.
+    /// Should be called when one wants to stop logging.
+    pub fn flush(
+        &mut self,
+        sd_card: &mut SdCard,
+        settings: &mut Settings,
+    ) -> Result<(), sdcard::Error> {
+        // do nothing if we have no buffered bytes
+        if self.current_idx == 0 {
+            return Ok(());
+        }
+
+        // write blocks until there is no more data to write
+        while self.current_idx > 0 {
+            self.write_first_block(sd_card, settings)?;
+        }
+
         Ok(())
     }
 }

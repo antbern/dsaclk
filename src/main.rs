@@ -349,7 +349,12 @@ fn main() -> ! {
                         // logf!("Encoder: {:?}\n", change);
                         defmt::info!("Encoder: {=i8}", change);
                     }
-                    LongPress => manager.leave(&mut panel_state),
+                    LongPress => {
+                        manager.leave(&mut panel_state);
+                        logger
+                            .flush(&mut card, &mut settings)
+                            .expect("Error flushing log");
+                    }
                     ShortPress => manager.enter(&mut panel_state),
                     Alarm => {
                         defmt::info!("Alarm Interrupt! {}", defmt::Debug2Format(&c.get_alarm()));
