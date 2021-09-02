@@ -4,10 +4,11 @@ use embedded_hal::{
     blocking::i2c::{Write, WriteRead},
 };
 use mpu6050::Mpu6050;
+use serde::{Deserialize, Serialize};
 
 use crate::vec::Vec3f;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Measurement {
     acc_mean: Vec3f,
     temp_mean: f32,

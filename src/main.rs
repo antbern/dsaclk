@@ -7,6 +7,7 @@ mod dialog;
 mod display;
 mod encoder;
 mod event;
+mod logger;
 mod mpu;
 mod panel;
 mod player;
@@ -43,6 +44,7 @@ use util::GlobalCell;
 use crate::{
     clock::AlarmState,
     display::{Display, I2CDisplayDriver},
+    logger::{LogContents, Logger},
     mpu::MPU,
     sdcard::Settings,
 };
@@ -117,7 +119,6 @@ fn TIM5() {
         });
     })
 }
-
 #[entry]
 fn main() -> ! {
     let peripherals = stm32f4xx_hal::stm32::Peripherals::take().unwrap();
@@ -201,11 +202,10 @@ fn main() -> ! {
 
     let mut card = SdCard::init(sdio, &mut delay, 2000).unwrap();
 
-    card.store_settings(Settings { id: 0x55 }).unwrap();
-    defmt::debug!(
-        "Loaded settings: {}",
-        defmt::Debug2Format(&card.load_settings())
-    );
+    //card.store_settings(Settings { logger_block: 10 }).unwrap();
+
+    let mut settings = card.load_settings().unwrap();
+    defmt::debug!("Loaded settings: {}", defmt::Debug2Format(&settings));
 
     // experiment with RTC
     let mut c = Clock::new(peripherals.RTC);
@@ -252,12 +252,6 @@ fn main() -> ! {
     // write stuff to the screen
     let mut disp: display::BufferedDisplay<4, 20> = display::BufferedDisplay::new();
     disp.clear().unwrap();
-    disp.set_cursor_position(0, 0).unwrap();
-    disp.write("Hello".as_bytes()).unwrap();
-
-    disp.set_cursor_position(1, 0).unwrap();
-    disp.write("World".as_bytes()).unwrap();
-
     disp.apply(&mut display).unwrap();
 
     defmt::info!("Initializing!");
@@ -279,6 +273,9 @@ fn main() -> ! {
     let mut last_cursor_state = CursorState::Off;
     let mut last_edit_state = false;
     let mut dialog: Option<dialog::Dialog> = None;
+
+    // create logger with one minute timeout
+    let mut logger = Logger::<10>::new(POLL_FREQ * 60);
 
     // enable TIM5 interrupt in the NVIC before starting the loop
     stm32::NVIC::unpend(stm32f4xx_hal::interrupt::TIM5);
@@ -328,7 +325,15 @@ fn main() -> ! {
 
                         if let Some(m) = mpu.tick() {
                             defmt::debug!("measurement: {:?}", defmt::Debug2Format(&m));
+                            logger.append(
+                                &c.get_state(),
+                                LogContents::Measurement(m),
+                                &mut card,
+                                &mut settings,
+                            );
                         }
+
+                        logger.tick(&mut card, &mut settings);
                     }
                     Encoder(change) => {
                         let mut c = change;

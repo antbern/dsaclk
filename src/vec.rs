@@ -2,8 +2,9 @@ use core::{
     fmt::Debug,
     ops::{Add, AddAssign, Div, DivAssign, Sub, SubAssign},
 };
+use serde::{Deserialize, Serialize};
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Vec3f(pub f32, pub f32, pub f32);
 
 impl Vec3f {
