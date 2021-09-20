@@ -1,5 +1,9 @@
 {
     "[rust]": {
         "editor.formatOnSave": true
-    }
+    },
+    // this is needed when the crates are not in the root of the VSCode workspace
+    "rust-analyzer.linkedProjects": [
+        "firmware/Cargo.toml"
+    ]
 }

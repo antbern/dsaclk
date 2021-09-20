@@ -9,10 +9,13 @@
              * but we need to provide a label for it,
              * so we can invoke it from the debug launcher.
              */
-            "label": "Cargo Build (debug)",
+            "label": "Cargo Build firmware (debug)",
             "type": "process",
             "command": "cargo",
             "args": ["build"],
+            "options": {
+                "cwd": "firmware"
+            },
             "problemMatcher": [
                 "$rustc"
             ],
@@ -22,28 +25,34 @@
             }
         },
         {
-            "label": "Cargo Build (release)",
+            "label": "Cargo Build firmware (release)",
             "type": "process",
             "command": "cargo",
             "args": ["build", "--release"],
+            "options": {
+                "cwd": "firmware"
+            },
             "problemMatcher": [
                 "$rustc"
             ],
             "group": "build"
         },
         {
-            "label": "Cargo Clean",
+            "label": "Cargo Clean firmware",
             "type": "process",
             "command": "cargo",
             "args": ["clean"],
+            "options": {
+                "cwd": "firmware"
+            },
             "problemMatcher": [],
             "group": "build"
         },
         {
-            "label": "Dropbox ignore target",
+            "label": "Dropbox ignore targets",
             "type": "process",
             "command": "attr",
-            "args": ["-s", "com.dropbox.ignored", "-V", "1", "target"],
+            "args": ["-s", "com.dropbox.ignored", "-V", "1", "firmware/target/"],
             "group": "none",
             "problemMatcher": []
         },

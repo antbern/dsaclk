@@ -10,13 +10,13 @@
             /* Configuration for the STM32F401RE Discovery board */
             "type": "cortex-debug",
             "request": "launch",
-            "name": "Debug (OpenOCD)",
+            "name": "Debug firmware (OpenOCD)",
             "gdbPath": "gdb-multiarch",
             "servertype": "openocd",
             "cwd": "${workspaceRoot}",
-            "preLaunchTask": "Cargo Build (debug)",
+            "preLaunchTask": "Cargo Build firmware (debug)",
             "runToMain": true,
-            "executable": "./target/thumbv7em-none-eabihf/debug/dsaclk",
+            "executable": "./firmware/target/thumbv7em-none-eabihf/debug/dsaclk",
             "device": "STM32F401RET6",
             "configFiles": [
                 "board/st_nucleo_f4.cfg"
